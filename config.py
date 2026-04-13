@@ -12,7 +12,7 @@ TOKENIZER_DIR = PROJECT_ROOT / "2-tokenizer"
 MODEL_DIR = PROJECT_ROOT / "3-model"
 TRAINING_SRC_DIR = PROJECT_ROOT / "3-training/src"
 LOG_DIR = PROJECT_ROOT / "6-logs"
-VENV_DIR = PROJECT_ROOT / "sage-gpt"
+VENV_DIR = PROJECT_ROOT / ".venv"
 
 PT_CHECKPOINT_DIR = MODEL_DIR / "pt" / "checkpoints"
 MLX_CHECKPOINT_DIR = MODEL_DIR / "mlx" / "checkpoints"
