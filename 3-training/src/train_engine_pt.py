@@ -25,11 +25,11 @@ except ImportError:
     sys.exit(1)
 
 # --- Configuration ---
-VOCAB_SIZE = 8000
-N_LAYER = 4
-N_HEAD = 8
-N_EMBD = 256
-CONTEXT_LENGTH = 256
+VOCAB_SIZE = config.VOCAB_SIZE
+N_LAYER = config.LAYERS
+N_HEAD = config.HEADS
+N_EMBD = config.EMBED_DIM
+CONTEXT_LENGTH = config.CONTEXT_LENGTH
 DROPOUT = 0.1
 
 # Training
@@ -180,7 +180,7 @@ def get_lr(it):
 
 def get_governor_state(current_batch_size, override_status=None):
     if DEVICE == "cuda":
-        active_mem = torch.cuda.memory_allocated()
+        active_mem = max(torch.cuda.memory_allocated(), torch.cuda.memory_reserved())
     else:
         active_mem = 0
         
@@ -294,15 +294,16 @@ def main():
             print(f"Loading weights from {latest_ckpt.name}...")
             state_dict = load_file(str(latest_ckpt))
             model.load_state_dict(state_dict)
+            
+            last_step_from_csv = get_last_step()
+            if last_step_from_csv > 0:
+                start_step = last_step_from_csv
+                print(f"Resumed Step Count: {start_step}")
         except Exception as e:
             print(f"[WARN] Failed to load weights: {e}")
-    
-    last_step_from_csv = get_last_step()
-    if last_step_from_csv > 0:
-        start_step = last_step_from_csv
-        print(f"Resumed Step Count: {start_step}")
+            print("[RESUME] Starting from Step 0 (Load failed).")
     else:
-        print("[RESUME] Starting from Step 0 (No history found).")
+        print("[RESUME] No checkpoints found. Starting from Step 0.")
     
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE_MAX, weight_decay=WEIGHT_DECAY)
     
@@ -331,8 +332,10 @@ def main():
     val_plateau_count = 0
     
     override_status = None
+    last_override_mtime = 0
     if MODE_OVERRIDE_FILE.exists():
         try:
+            last_override_mtime = MODE_OVERRIDE_FILE.stat().st_mtime
             content = MODE_OVERRIDE_FILE.read_text().strip().upper()
             if content in ["FACTORY", "STEALTH"]:
                 override_status = content
@@ -345,19 +348,29 @@ def main():
     try:
         while True:
             if step % 20 == 0:
-                new_override = None
                 if MODE_OVERRIDE_FILE.exists():
                     try:
-                        new_override = MODE_OVERRIDE_FILE.read_text().strip().upper()
-                        if new_override not in ["FACTORY", "STEALTH"]: new_override = None
+                        current_mtime = MODE_OVERRIDE_FILE.stat().st_mtime
+                        if current_mtime > last_override_mtime:
+                            content = MODE_OVERRIDE_FILE.read_text().strip().upper()
+                            last_override_mtime = current_mtime
+                            new_override = content if content in ["FACTORY", "STEALTH"] else None
+                            
+                            if new_override != override_status:
+                                print(f"\n⚠️ TRANSITIONING TO [{new_override if new_override else 'AUTO'}] ⚠️")
+                                state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+                                save_file(state_dict, str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
+                                if DEVICE == "cuda": torch.cuda.empty_cache()
+                                override_status = new_override
                     except Exception: pass
-                
-                if new_override != override_status:
-                    print(f"\n⚠️ TRANSITIONING TO [{new_override if new_override else 'AUTO'}] ⚠️")
-                    state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-                    save_file(state_dict, str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
-                    if DEVICE == "cuda": torch.cuda.empty_cache()
-                    override_status = new_override
+                else:
+                    if override_status is not None:
+                        print(f"\n⚠️ TRANSITIONING TO [AUTO] ⚠️")
+                        state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+                        save_file(state_dict, str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
+                        if DEVICE == "cuda": torch.cuda.empty_cache()
+                        override_status = None
+                        last_override_mtime = 0
 
             target_bs, sleep_time, mode = get_governor_state(batch_size, override_status)
             batch_size = target_bs 
@@ -407,7 +420,11 @@ def main():
                 else:
                     val_plateau_count += 1
                 
-                mem_gb = torch.cuda.memory_allocated() / 1024**3 if DEVICE == "cuda" else 0.0
+                
+                if DEVICE == "cuda":
+                    mem_gb = max(torch.cuda.memory_allocated(), torch.cuda.memory_reserved()) / 1024**3
+                else:
+                    mem_gb = 0.0
                 tps = effective_tokens / dt
                 print(f"[Step {step}] {mode} | TrLoss:{total_loss:.4f} | ValLoss:{val_loss:.4f} | LR:{lr:.2e} | Mem:{mem_gb:.1f}GB | Plat: {val_plateau_count}")
                 log_metrics(step, epoch, total_loss, val_loss, mode, mem_gb, FACTORY_BATCH_SIZE, tps, lr, val_plateau_count)

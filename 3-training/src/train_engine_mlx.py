@@ -25,11 +25,11 @@ except ImportError:
     sys.exit(1)
 
 # --- Configuration ---
-VOCAB_SIZE = 8000
-N_LAYER = 4
-N_HEAD = 8
-N_EMBD = 256
-CONTEXT_LENGTH = 256
+VOCAB_SIZE = config.VOCAB_SIZE
+N_LAYER = config.LAYERS
+N_HEAD = config.HEADS
+N_EMBD = config.EMBED_DIM
+CONTEXT_LENGTH = config.CONTEXT_LENGTH
 DROPOUT = 0.1
 
 # Training
@@ -268,15 +268,16 @@ def main():
         try:
             print(f"Loading weights from {latest_ckpt.name}...")
             model.load_weights(str(latest_ckpt))
+            
+            last_step_from_csv = get_last_step()
+            if last_step_from_csv > 0:
+                start_step = last_step_from_csv
+                print(f"Resumed Step Count: {start_step}")
         except Exception as e:
             print(f"[WARN] Failed to load weights: {e}")
-    
-    last_step_from_csv = get_last_step()
-    if last_step_from_csv > 0:
-        start_step = last_step_from_csv
-        print(f"Resumed Step Count: {start_step}")
+            print("[RESUME] Starting from Step 0 (Load failed).")
     else:
-        print("[RESUME] Starting from Step 0 (No history found).")
+        print("[RESUME] No checkpoints found. Starting from Step 0.")
     
     optimizer = optim.AdamW(learning_rate=LEARNING_RATE_MAX, weight_decay=WEIGHT_DECAY)
     
@@ -311,8 +312,10 @@ def main():
     val_plateau_count = 0
     
     override_status = None
+    last_override_mtime = 0
     if MODE_OVERRIDE_FILE.exists():
         try:
+            last_override_mtime = MODE_OVERRIDE_FILE.stat().st_mtime
             content = MODE_OVERRIDE_FILE.read_text().strip().upper()
             if content in ["FACTORY", "STEALTH"]:
                 override_status = content
@@ -329,23 +332,33 @@ def main():
         while True:
             # FIXED: Check override every 20 steps, enforce uppercase
             if step % 20 == 0:
-                new_override = None
                 if MODE_OVERRIDE_FILE.exists():
                     try:
-                        content = MODE_OVERRIDE_FILE.read_text().strip().upper()
-                        if content in ["FACTORY", "STEALTH"]:
-                            new_override = content
+                        current_mtime = MODE_OVERRIDE_FILE.stat().st_mtime
+                        if current_mtime > last_override_mtime:
+                            content = MODE_OVERRIDE_FILE.read_text().strip().upper()
+                            last_override_mtime = current_mtime
+                            new_override = content if content in ["FACTORY", "STEALTH"] else None
+                            
+                            if new_override != override_status:
+                                print(f"\n⚠️ SOVEREIGN OVERRIDE: TRANSITIONING TO [{new_override if new_override else 'AUTO'}] ⚠️")
+                                msg = f"Transitioning to {new_override}" if new_override else "Returning to Auto Governor"
+                                print(f"[Governor] {msg}. Saving safety checkpoint...")
+                                model.save_weights(str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
+                                mx.clear_cache()
+                                print("[Governor] Metal Cache Cleared.")
+                                override_status = new_override
                     except Exception as e:
                         print(f"[WARN] Failed to read override file: {e}")
-                
-                if new_override != override_status:
-                    print(f"\n⚠️ SOVEREIGN OVERRIDE: TRANSITIONING TO [{new_override if new_override else 'AUTO'}] ⚠️")
-                    msg = f"Transitioning to {new_override}" if new_override else "Returning to Auto Governor"
-                    print(f"[Governor] {msg}. Saving safety checkpoint...")
-                    model.save_weights(str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
-                    mx.clear_cache()
-                    print("[Governor] Metal Cache Cleared.")
-                    override_status = new_override
+                else:
+                    if override_status is not None:
+                        print(f"\n⚠️ SOVEREIGN OVERRIDE: TRANSITIONING TO [AUTO] ⚠️")
+                        print("[Governor] Returning to Auto Governor. Saving safety checkpoint...")
+                        model.save_weights(str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
+                        mx.clear_cache()
+                        print("[Governor] Metal Cache Cleared.")
+                        override_status = None
+                        last_override_mtime = 0
 
             target_bs, sleep_time, mode = get_governor_state(batch_size, override_status)
             batch_size = target_bs 
