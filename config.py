@@ -1,0 +1,31 @@
+# Auto-generated config by setup_factory.py
+from pathlib import Path
+
+PROJECT_ROOT = Path("/Users/rajrawat/rawatlabs/sage-gpt")
+ROOT_DIR = PROJECT_ROOT
+
+RAW_DATA_DIR = PROJECT_ROOT / "1-data/01-raw"
+PURIFIED_DATA_DIR = PROJECT_ROOT / "1-data/02-purified"
+TOKENIZED_DATA_DIR = PROJECT_ROOT / "1-data/03-tokenized"
+META_DATA_DIR = PROJECT_ROOT / "1-data/04-meta"
+TOKENIZER_DIR = PROJECT_ROOT / "2-tokenizer"
+MODEL_DIR = PROJECT_ROOT / "3-model"
+TRAINING_SRC_DIR = PROJECT_ROOT / "3-training/src"
+LOG_DIR = PROJECT_ROOT / "6-logs"
+VENV_DIR = PROJECT_ROOT / "sage-gpt"
+
+PT_CHECKPOINT_DIR = MODEL_DIR / "pt" / "checkpoints"
+MLX_CHECKPOINT_DIR = MODEL_DIR / "mlx" / "checkpoints"
+
+# Ensure directories exist
+for directory in [RAW_DATA_DIR, PURIFIED_DATA_DIR, TOKENIZED_DATA_DIR, META_DATA_DIR, TOKENIZER_DIR, MODEL_DIR, TRAINING_SRC_DIR, LOG_DIR, PT_CHECKPOINT_DIR, MLX_CHECKPOINT_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
+
+# 8.4M Grokking Specs
+MODEL_NAME = "Sage-GPT-7.25M-Grok"
+DATA_STATS = "56.89M Tokens (164.8M Characters)"
+VOCAB_SIZE = 8000
+CONTEXT_LENGTH = 256
+EMBED_DIM = 256
+HEADS = 8
+LAYERS = 4

@@ -1,0 +1,33 @@
+# System & Environment
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+sage-gpt/
+env/
+venv/
+.sage_status
+.python-version
+
+# Ignore all raw, purified, and tokenized data
+1-data/01-raw/
+1-data/02-purified/
+1-data/03-tokenized/
+1-data/04-meta/
+
+# Ignore large binaries
+2-tokenizer/*.model
+2-tokenizer/*.vocab
+3-model/
+*.safetensors
+*.npz
+
+# Ignore all telemetry and logs
+6-logs/
+*.log
+*.json
+dry_run_corpus.txt
+
+# Editor
+.vscode/
+.idea/

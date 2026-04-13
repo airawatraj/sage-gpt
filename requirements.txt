@@ -1,0 +1,11 @@
+pymupdf
+sentencepiece
+mlx
+numpy
+tqdm
+pandas
+matplotlib
+beautifulsoup4
+lxml
+pdf2image
+pytesseract
