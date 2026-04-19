@@ -81,18 +81,6 @@ Our "Zero-Poison" policy ensures the model trains only on high-fidelity Sanskrit
 
 ---
 
-## ⚙️ Operational Modes (AEDT Aware)
-SAGE-GPT adapts training intensity based on the time of day to protect M1 resources.
-
-### ☀️ STEALTH Mode (09:00 - 18:00)
-* **Batch Size**: 4 (with 32-step Grad Accumulation).
-* **Effective BS**: 128 (Mathematically stable).
-* **VRAM**: Optimized for background execution while working.
-
-### 🌙 FACTORY Mode (18:00 - 09:00)
-* **Batch Size**: 128 (Direct Metal acceleration).
-* **Focus**: High-throughput stochastic exploration.
-
 
 ### Prune Checkpoints
 

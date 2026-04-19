@@ -8,3 +8,5 @@ beautifulsoup4
 lxml
 pdf2image
 pytesseract
+torch
+safetensors
