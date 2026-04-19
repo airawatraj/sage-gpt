@@ -18,6 +18,8 @@
 Transforms 14GB raw data into the 56.89M token pure corpus using NFKC normalization and the 8k Sutra Unigram tokenizer.
 ```bash
 uv run python3 1-data/05-scripts/visuddhi.py
+uv run python3 1-data/05-scripts/refine_corpus.py
+uv run python3 2-tokenizer/sutra_tokenizer.py
 ```
 
 ### Step 3: Train (Cross-Platform Orchestrator)
