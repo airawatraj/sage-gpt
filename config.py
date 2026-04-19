@@ -1,10 +1,11 @@
 # Auto-generated config by setup_factory.py
 from pathlib import Path
 
-PROJECT_ROOT = Path("/Users/airawatraj/rawatlabs/sage-gpt")
+PROJECT_ROOT = Path("~/code/rawatlabs/sage-gpt")
 ROOT_DIR = PROJECT_ROOT
 
 RAW_DATA_DIR = PROJECT_ROOT / "1-data/01-raw"
+PURIFIED_DATA_DIR = PROJECT_ROOT / "1-data/02-purified"
 TOKENIZED_DATA_DIR = PROJECT_ROOT / "1-data/03-tokenized"
 META_DATA_DIR = PROJECT_ROOT / "1-data/04-meta"
 TOKENIZER_DIR = PROJECT_ROOT / "2-tokenizer"
