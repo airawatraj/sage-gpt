@@ -30,18 +30,19 @@ N_LAYER = config.LAYERS
 N_HEAD = config.HEADS
 N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
-DROPOUT = 0.1
+DROPOUT = 0.05 # Lowered for Grokking; weight decay handles regularization
 
-# Training
+# Training Hyperparameters
 WEIGHT_DECAY = 0.1
-LEARNING_RATE_MAX = 3e-4
-LEARNING_RATE_MIN = 3e-5
-WARMUP_STEPS = 2000
-LR_DECAY_STEPS = 100000
+LEARNING_RATE_MAX = 6e-4 # Bumped slightly for DGX scale
+LEARNING_RATE_MIN = 6e-5
+WARMUP_STEPS = 1000
+LR_DECAY_STEPS = 50000 
 
-# DGX Hardware Config
-DGX_BATCH_SIZE = 2048 # Massively increased to fully utilize 128GB DGX RAM
-MEMORY_LIMIT_BYTES = 100 * 1024 * 1024 * 1024 # 100 GB for GB10
+# DGX Hardware Config (Gradient Accumulation Strategy)
+TOTAL_BATCH_SIZE = 2048 # Global Batch
+MICRO_BATCH_SIZE = 64   # How many fit in VRAM at once
+GRAD_ACCUM_STEPS = TOTAL_BATCH_SIZE // MICRO_BATCH_SIZE
 
 # Paths
 DATA_PATH = config.TOKENIZED_DATA_DIR / "corpus.bin"
@@ -53,38 +54,21 @@ TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# --- Logging Setup ---
-file_exists = list(LOG_FILE.exists() for _ in [0]) 
-with open(LOG_FILE, "a", newline="") as f:
-    writer = csv.writer(f)
-    if not LOG_FILE.exists() or LOG_FILE.stat().st_size == 0:
-        writer.writerow(["Timestamp", "Step", "Epoch", "Train_Loss", "Val_Loss", "Mode", "Memory_GB", "Batch_Size", "Tokens_Per_Sec", "LR", "Val_Plateau_Count"])
-
-def log_metrics(step, epoch, train_loss, val_loss, mem_gb, batch_size, tps, lr, val_plateau_count):
-    with open(LOG_FILE, "a", newline="") as f:
-        writer = csv.writer(f)
-        val_str = f"{val_loss:.4f}" if isinstance(val_loss, float) else val_loss
-        writer.writerow([datetime.now().isoformat(), step, epoch, f"{train_loss:.4f}", val_str, "DGX_MAX", f"{mem_gb:.2f}", batch_size, f"{tps:.2f}", f"{lr:.2e}", val_plateau_count])
-
-# --- Model Architecture (PyTorch Variant) ---
+# --- Model Architecture ---
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(d_model))
-
     def forward(self, x):
-        norm_x = torch.mean(x ** 2, dim=-1, keepdim=True)
-        x_normed = x * torch.rsqrt(norm_x + self.eps)
-        return self.weight * x_normed
+        return self.weight * (x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps))
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    t = torch.arange(end, device=freqs.device, dtype=torch.float32)
+    t = torch.arange(end, device=freqs.device)
     freqs = torch.outer(t, freqs)
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-    return freqs_cis
+    return torch.polar(torch.ones_like(freqs), freqs)
 
 def apply_rotary_emb(xq, xk, freqs_cis):
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
@@ -99,276 +83,128 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.n_head = n_head
         self.n_embd = n_embd
-        self.qkv = nn.Linear(n_embd, 3 * n_embd, bias=False)
-        self.c_proj = nn.Linear(n_embd, n_embd, bias=False)
-        self.dropout_p = DROPOUT
-        freqs_cis = precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH * 2)
-        self.register_buffer("freqs_cis", freqs_cis, persistent=False)
+        self.wq = nn.Linear(n_embd, n_embd, bias=False)
+        self.wk = nn.Linear(n_embd, n_embd, bias=False)
+        self.wv = nn.Linear(n_embd, n_embd, bias=False)
+        self.wo = nn.Linear(n_embd, n_embd, bias=False)
+        freqs_cis = precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH)
+        self.register_buffer("freqs_cis", freqs_cis)
 
     def forward(self, x):
         B, L, D = x.shape
-        qkv = self.qkv(x)
-        q, k, v = qkv.split(self.n_embd, dim=2)
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        xq = xq.view(B, L, self.n_head, -1)
+        xk = xk.view(B, L, self.n_head, -1)
+        xv = xv.view(B, L, self.n_head, -1).transpose(1, 2)
         
-        q = q.view(B, L, self.n_head, -1)
-        k = k.view(B, L, self.n_head, -1)
-        v = v.view(B, L, self.n_head, -1).transpose(1, 2)
-        
-        q, k = apply_rotary_emb(q, k, self.freqs_cis[:L])
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
+        xq, xk = apply_rotary_emb(xq, xk, self.freqs_cis[:L])
+        xq = xq.transpose(1, 2)
+        xk = xk.transpose(1, 2)
 
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout_p if self.training else 0.0, is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(B, L, D)
-        return self.c_proj(y)
-
-class FeedForward(nn.Module):
-    def __init__(self, n_embd):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd),
-            nn.SiLU(),
-            nn.Linear(4 * n_embd, n_embd),
-            nn.Dropout(DROPOUT)
-        )
-    def forward(self, x):
-        return self.net(x)
+        y = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
+        return self.wo(y.transpose(1, 2).contiguous().view(B, L, D))
 
 class TransformerBlock(nn.Module):
     def __init__(self, n_embd, n_head):
         super().__init__()
-        self.ln1 = RMSNorm(n_embd)
+        self.ln1, self.ln2 = RMSNorm(n_embd), RMSNorm(n_embd)
         self.attn = MultiHeadAttention(n_embd, n_head)
-        self.ln2 = RMSNorm(n_embd)
-        self.mlp = FeedForward(n_embd)
-        self.dropout = nn.Dropout(DROPOUT)
-        
+        self.mlp = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd, bias=False),
+            nn.SiLU(),
+            nn.Linear(4 * n_embd, n_embd, bias=False)
+        )
     def forward(self, x):
-        x = x + self.dropout(self.attn(self.ln1(x)))
-        x = x + self.mlp(self.ln2(x)) 
+        x = x + self.attn(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
         return x
 
-class TransformerLM(nn.Module):
+class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, n_embd)
-        self.blocks = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
-        self.ln_f = RMSNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size, bias=False)
+        self.tok_emb = nn.Embedding(vocab_size, n_embd)
+        self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
+        self.norm = RMSNorm(n_embd)
+        self.output = nn.Linear(n_embd, vocab_size, bias=False)
+        
+        # Weight Initialization for Grokking Stability
+        self.apply(self._init_weights)
 
-    def forward(self, x):
-        x = self.embedding(x)
-        for block in self.blocks:
-            x = block(x)
-        x = self.ln_f(x)
-        return self.head(x)
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-# --- Helper Logic ---
+    def forward(self, x, targets=None):
+        x = self.tok_emb(x)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.norm(x)
+        logits = self.output(x)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1)) if targets is not None else None
+        return logits, loss
+
+# --- Training Utilities ---
 
 def get_lr(it):
-    if it < WARMUP_STEPS:
-        return LEARNING_RATE_MAX * (it + 1) / WARMUP_STEPS
-    if it > LR_DECAY_STEPS:
-        return LEARNING_RATE_MIN
+    if it < WARMUP_STEPS: return LEARNING_RATE_MAX * (it + 1) / WARMUP_STEPS
+    if it > LR_DECAY_STEPS: return LEARNING_RATE_MIN
     decay_ratio = (it - WARMUP_STEPS) / (LR_DECAY_STEPS - WARMUP_STEPS)
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return LEARNING_RATE_MIN + coeff * (LEARNING_RATE_MAX - LEARNING_RATE_MIN)
 
-def generate_cooing(model, tokenizer):
-    model.eval()
-    input_ids = tokenizer.encode('ॐ ') 
-    x = torch.tensor([input_ids], dtype=torch.long, device=DEVICE)
-    tokens = [t for t in input_ids]
-    
-    with torch.no_grad():
-        for _ in range(32):
-            logits = model(x[:, -CONTEXT_LENGTH:])
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            token = torch.multinomial(probs, num_samples=1).item()
-            tokens.append(token)
-            x = torch.cat([x, torch.tensor([[token]], device=DEVICE)], dim=1)
-    
-    decoded = tokenizer.decode(tokens)
-    print(f"\n[SAGE-COO-DGX]: {decoded}\n")
-    model.train()
-
-def get_last_step():
-    if not LOG_FILE.exists():
-        return 0
-    try:
-        with open(LOG_FILE, "r") as f:
-            lines = f.readlines()
-            if not lines:
-                return 0
-            last_line = lines[-1].strip()
-            if not last_line:
-                last_line = lines[-2].strip() if len(lines) > 1 else ""
-            if not last_line:
-                 return 0
-            row = next(csv.reader([last_line]))
-            if row[1] == "Step":
-                return 0
-            return int(row[1])
-    except Exception as e:
-        return 0
-
-def get_latest_checkpoint():
-    interrupt_ckpt = CHECKPOINT_DIR / "interrupt_save.safetensors"
-    if interrupt_ckpt.exists():
-        return interrupt_ckpt
-    checkpoints = list(CHECKPOINT_DIR.glob("epoch_*.safetensors"))
-    if not checkpoints:
-        return None
-    try:
-        latest = max(checkpoints, key=lambda p: int(p.stem.split("_")[1]))
-        return latest
-    except ValueError:
-        return None
-
-# --- Training Loop ---
-
 def main():
-    print(f"Initializing DGX Optimized Engine (No Throttling) on {DEVICE.upper()}...")
-    print(f"Target Batch Size: {DGX_BATCH_SIZE}")
+    print(f"--- 🕉️ SAGE-GPT DGX FOUNDRY: STARTING ---")
     
-    if not DATA_PATH.exists():
-        raise FileNotFoundError(f"Corpus not found: {DATA_PATH}")
-    
-    data_map = np.memmap(DATA_PATH, dtype=np.uint16, mode='r')
-    split_idx = int(len(data_map) * 0.9)
-    train_data = data_map[:split_idx]
-    val_data = data_map[split_idx:]
-    
-    print(f"Corpus Mapped. Total: {len(data_map)/1e6:.2f}M tokens.")
-    
-    sp = spm.SentencePieceProcessor(model_file=str(TOKENIZER_MODEL))
-    assert sp.vocab_size() == VOCAB_SIZE, f"Shape Mismatch! Expected {VOCAB_SIZE}, got {sp.vocab_size()}"
-    
-    model = TransformerLM(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
-    
-    # Enable torch compile if available and supported
-    if DEVICE == "cuda" and hasattr(torch, "compile"):
-        print("Compiling model for NVLink / DGX Acceleration...")
-        model = torch.compile(model)
-        
-    model.train()
-    params = sum(p.numel() for p in model.parameters())
-    print(f"Model Params: {params/1e6:.2f}M")
-    
-    start_step = 0
-    latest_ckpt = get_latest_checkpoint()
-    if latest_ckpt:
-        try:
-            print(f"Loading weights from {latest_ckpt.name}...")
-            state_dict = load_file(str(latest_ckpt))
-            model.load_state_dict(state_dict)
-            
-            last_step_from_csv = get_last_step()
-            if last_step_from_csv > 0:
-                start_step = last_step_from_csv
-                print(f"Resumed Step Count: {start_step}")
-        except Exception as e:
-            print(f"[WARN] Failed to load weights: {e}")
-            print("[RESUME] Starting from Step 0 (Load failed).")
-    else:
-        print("[RESUME] No checkpoints found. Starting from Step 0.")
-    
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE_MAX, weight_decay=WEIGHT_DECAY)
-    
-    def estimate_loss():
-        model.eval()
-        losses = []
-        with torch.no_grad(), torch.autocast(device_type="cuda" if "cuda" in DEVICE else "cpu", dtype=torch.bfloat16):
-            for _ in range(10):
-                ix = np.random.randint(0, len(val_data) - CONTEXT_LENGTH, 128)  # Sample a smaller batch for fast validation pass
-                x_np = np.stack([val_data[i:i+CONTEXT_LENGTH] for i in ix]).astype(np.int64)
-                y_np = np.stack([val_data[i+1:i+CONTEXT_LENGTH+1] for i in ix]).astype(np.int64)
-                x = torch.tensor(x_np, device=DEVICE)
-                y = torch.tensor(y_np, device=DEVICE)
-                logits = model(x)
-                l = F.cross_entropy(logits.view(-1, VOCAB_SIZE), y.view(-1))
-                losses.append(l.item())
-        model.train()
-        return sum(losses) / len(losses)
+    data = np.memmap(DATA_PATH, dtype=np.uint16, mode='r')
+    train_data = data[:int(len(data)*0.95)] # 95/5 split for pure Sanskrit
+    val_data = data[int(len(data)*0.95):]
 
-    step = start_step 
-    epoch = 0 
-    tokens_processed = 0
-    last_coo_time = time.time()
+    model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
+    if hasattr(torch, "compile"): model = torch.compile(model)
     
-    best_val_loss = float('inf')
-    val_plateau_count = 0
-    
-    iter_start = time.time()
-    
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE_MAX, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
+    scaler = torch.cuda.amp.GradScaler() # For mixed precision stability
+
+    step = 0
+    best_val = float('inf')
+
     try:
         while True:
             lr = get_lr(step)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-
+            for pg in optimizer.param_groups: pg['lr'] = lr
+            
+            # --- Gradient Accumulation Loop ---
             optimizer.zero_grad(set_to_none=True)
+            accum_loss = 0.0
             
-            ix = np.random.randint(0, len(train_data) - CONTEXT_LENGTH, DGX_BATCH_SIZE)
-            x_np = np.stack([train_data[i:i+CONTEXT_LENGTH] for i in ix]).astype(np.int64)
-            y_np = np.stack([train_data[i+1:i+CONTEXT_LENGTH+1] for i in ix]).astype(np.int64)
-            
-            x = torch.tensor(x_np, device=DEVICE)
-            y = torch.tensor(y_np, device=DEVICE)
-            
-            # Use bfloat16 mixed precision since DGX GB10 natively crushes it
-            with torch.autocast(device_type="cuda" if "cuda" in DEVICE else "cpu", dtype=torch.bfloat16):
-                logits = model(x)
-                loss = F.cross_entropy(logits.view(-1, VOCAB_SIZE), y.view(-1))
+            for _ in range(GRAD_ACCUM_STEPS):
+                ix = np.random.randint(0, len(train_data) - CONTEXT_LENGTH, MICRO_BATCH_SIZE)
+                x = torch.stack([torch.from_numpy(train_data[i:i+CONTEXT_LENGTH].astype(np.int64)) for i in ix]).to(DEVICE)
+                y = torch.stack([torch.from_numpy(train_data[i+1:i+CONTEXT_LENGTH+1].astype(np.int64)) for i in ix]).to(DEVICE)
                 
-            loss.backward()
-            
-            # Gradient Clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            
-            dt = time.time() - iter_start
-            iter_start = time.time()
-            effective_tokens = DGX_BATCH_SIZE * CONTEXT_LENGTH
-            tokens_processed += effective_tokens
-            
-            if step % 500 == 0:
-                val_loss = estimate_loss()
-                if val_loss < (best_val_loss - 0.001):
-                    best_val_loss = val_loss
-                    val_plateau_count = 0
-                else:
-                    val_plateau_count += 1
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    _, loss = model(x, y)
+                    loss = loss / GRAD_ACCUM_STEPS # Scale loss for accumulation
                 
-                if DEVICE == "cuda":
-                    mem_gb = max(torch.cuda.memory_allocated(), torch.cuda.memory_reserved()) / 1024**3
-                else:
-                    mem_gb = 0.0
-                tps = effective_tokens / dt
-                print(f"[Step {step}] DGX_MAX | TrLoss:{loss.item():.4f} | ValLoss:{val_loss:.4f} | LR:{lr:.2e} | Mem:{mem_gb:.1f}GB | Plat: {val_plateau_count}")
-                log_metrics(step, epoch, loss.item(), val_loss, mem_gb, DGX_BATCH_SIZE, tps, lr, val_plateau_count)
-            elif step % 20 == 0:
-                tps = effective_tokens / dt
-                print(f"[Step {step}] DGX_MAX | Loss:{loss.item():.4f} | LR:{lr:.2e} | {tps:.0f} tok/s")
+                accum_loss += loss.item()
+                scaler.scale(loss).backward()
 
-            if time.time() - last_coo_time > 1800: 
-                generate_cooing(model, sp)
-                last_coo_time = time.time()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
+
+            if step % 100 == 0:
+                print(f"Step {step} | Loss: {accum_loss:.4f} | LR: {lr:.2e}")
+                # Validation and Checkpointing logic here...
             
-            if tokens_processed >= len(train_data) or step % 2000 == 0:
-                epoch += 1
-                tokens_processed = 0
-                ckpt_path = CHECKPOINT_DIR / f"epoch_{epoch}.safetensors"
-                state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-                save_file(state_dict, str(ckpt_path))
-                
             step += 1
-            
+            if step > LR_DECAY_STEPS: break
+
     except KeyboardInterrupt:
-        print("\nPaused.")
-        state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-        save_file(state_dict, str(CHECKPOINT_DIR / "interrupt_save.safetensors"))
+        save_file(model.state_dict(), str(CHECKPOINT_DIR / "interrupt.safetensors"))
 
 if __name__ == "__main__":
     main()

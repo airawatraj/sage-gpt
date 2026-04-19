@@ -21,10 +21,19 @@ for directory in [RAW_DATA_DIR, PURIFIED_DATA_DIR, TOKENIZED_DATA_DIR, META_DATA
     directory.mkdir(parents=True, exist_ok=True)
 
 # 8.4M Grokking Specs
-MODEL_NAME = "Sage-GPT-7.25M-Grok"
-DATA_STATS = "56.89M Tokens (164.8M Characters)"
-VOCAB_SIZE = 8000
-CONTEXT_LENGTH = 256
-EMBED_DIM = 256
-HEADS = 8
-LAYERS = 4
+# MODEL_NAME = "Sage-GPT-7.25M-Grok"
+# DATA_STATS = "56.89M Tokens (164.8M Characters)"
+# VOCAB_SIZE = 8000
+# CONTEXT_LENGTH = 256
+# EMBED_DIM = 256
+# HEADS = 8
+# LAYERS = 4
+
+# DGX-Optimized "Sage-GPT" Specs
+MODEL_NAME = "Sage-GPT-48M-Sutra"
+DATA_STATS = "~72M Tokens (~223M Characters) 223 MB"
+VOCAB_SIZE = 16000 
+CONTEXT_LENGTH = 1024 
+EMBED_DIM = 512
+HEADS = 16
+LAYERS = 10

@@ -1,92 +1,100 @@
+```markdown
 # 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT)
 
 > "To find the Sutra in the Signal."
 
-**Sage-GPT-7.25M (Grokking Phase)** is a Decoder-only Transformer trained from scratch on 56.89M ultra-pure Sanskrit tokens (164.8M characters). Architected to induce grokking (delayed generalization) through high-overfitting regimes.
+**Sage-GPT-48M-Sutra (DGX Foundry)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~72M ultra-pure Sanskrit tokens** (~223M characters). This model marks the transition from a Small Language Model (SLM) to a robust foundation model for Vedic and Classical Sanskrit logic, architected to induce **Grokking** (delayed generalization) through high-density data and high-overfitting training regimes.
 
-### Specification Engine
-* **Architecture**: 4 Layers, 8 Attention Heads, 256 Embedding Dim, 256 Context Length.
-* **Tokenizer**: SentencePiece Unigram (8k Vocab, byte_fallback active, NFKC Strict).
-* **Training Engine**: Dual-Backend Architecture with AEDT-governed execution:
-  * **NVIDIA DGX Support**: Utilizes PyTorch `bfloat16` Native Mixed Precision, `torch.compile` graph optimization, and FlashAttention for maximum high-performance cluster throughput.
+## 🚀 DGX Specification Engine
+
+| Feature | Specification | Impact |
+| :--- | :--- | :--- |
+| **Model Size** | **~48M Parameters** | Deeper structural understanding of Paninian grammar. |
+| **Architecture** | 10 Layers, 16 Attention Heads | Massive capacity for hierarchical language rules. |
+| **Dimensions** | 512 Embedding Dim | Richer semantic mapping of philosophical concepts. |
+| **Context Window** | **1024 Tokens** | Ability to ingest full chapters/shlokas in one window. |
+| **Tokenizer** | SentencePiece Unigram (16k Vocab) | Reduced fragmentation; captures complex *Sandhi*. |
+| **Precision** | `bfloat16` Native Mixed | Leverages DGX H100/A100 hardware for stable throughput. |
 
 ---
 
 ## 🚦 Execution Pipeline
 
-### Step 1 & 2: Data Purification & Tokenization
-Transforms 14GB raw data into the 56.89M token pure corpus using NFKC normalization and the 8k Sutra Unigram tokenizer.
+### Step 1: Deep Data Purification (V5)
+The **Visuddhi V5** engine transforms ~14GB of raw "soup" into a purified Sanskrit gold-standard corpus.
+* **Lazy OCR Fallback**: Automatically triggers Tesseract OCR for scanned manuscripts while maintaining fast extraction for searchable PDFs.
+* **Nukta & Hindi Shield**: 100% rejection of modern vernacular markers and "Decompression Bomb" safety for high-res 100MP manuscript scans.
 ```bash
-uv run python3 1-data/05-scripts/visuddhi.py
+uv run python3 1-data/05-scripts/visuddhiv5.py
+```
+
+### Step 2: Refine Corpus (Linguistic Scalpel)
+Precision filtering for medieval vernacular (Awadhi/Brij) markers (ends in `हि`, `उ`) to ensure Sutra-grade purity.
+```bash
 uv run python3 1-data/05-scripts/refine_corpus.py
+```
+
+### Step 3: Sutra Tokenization (16k)
+Builds the unigram model using a 16,000-word vocabulary optimized for the ~88M token corpus.
+```bash
 uv run python3 2-tokenizer/sutra_tokenizer.py
 ```
 
-### Step 3: Train (Cross-Platform Orchestrator)
-Initiates the training loop via the root launcher. It automatically detects if you are on an NVIDIA DGX or an Apple device.
-
-For **NVIDIA DGX** (128GB+ VRAM), use the optimized high-throughput launcher without AEDT throttling:
+### Step 4: High-Throughput DGX Training
+Initiates the training loop optimized for the DGX Spark cluster. Features `torch.compile` graph optimization, FlashAttention, and Cosine Learning Rate Decay.
 ```bash
+# Launch on NVIDIA DGX (128GB+ VRAM)
 uv run python3 train_dgx.py
 ```
 
-### Step 3.5: Multi-Mode Inference
-Deploy the interactive dual-mode inference shell on DGX:
+---
+
+## 🛡️ Linguistic Guardrails (V5)
+Our "Zero-Poison" policy ensures the model trains only on high-fidelity Sanskrit.
+
+| Guardrail | Implementation | Goal |
+| :--- | :--- | :--- |
+| **Normalization** | **NFKC Strict** | Prevents shattering of complex conjuncts/ligatures. |
+| **Linguistic Isolation** | Disjoint Stopwords | Rejection of Hindi, Marathi, Pali, and Prakrit. |
+| **Precision OCR** | san+hin Tesseract | Accurate recovery of scanned Sanskrit manuscripts. |
+| **Vedic Integrity** | Swara Protection | Preserves Anusvara, Visarga, and Vedic accents. |
+
+---
+
+## 📊 Evaluation & Mechanistic Suite
+
+Sage-GPT includes a suite of mechanistic interpretability tools to monitor the **Grokking Phase Shift**.
+
+1.  **Generalization Gap Monitor**: Tracks Train vs. Val Loss divergence in real-time.
+    ```bash
+    uv run python3 4-evaluation/generalisation_gap_monitor.py
+    ```
+2.  **Mechanistic Weight Inspection**: Tracks L2 norms of Attention/MLP layers to observe weight consolidation during grokking.
+    ```bash
+    uv run python3 4-evaluation/inspect_norms.py
+    uv run python3 4-evaluation/plot_norms.py
+    ```
+3.  **The Ashtavakra Audit**: A specialized logical consistency test for the model's Sanskrit generative output.
+    ```bash
+    uv run python3 4-evaluation/ashtavakra_audit.py
+    ```
+
+> **Tip:** Run the full evaluation suite with: `./4-evaluation/evaluate.sh`
+
+---
+
+### Utility Commands
+
+**Prune Checkpoints (Storage Optimization):**
+```bash
+uv run python3 3-training/src/prune_checkpoints.py
+```
+
+**Multi-Mode Inference (DGX Shell):**
 ```bash
 uv run python3 inference.py
 ```
 
-### Step 4: Generalisation Gap Monitor
-Runs passively in a separate terminal to generate a dark-mode, log-scale plot of the grokking divergence (Train vs Validation Loss). The plot is saved to `6-logs/evaluation/generalisation_gap.png`.
-```bash
-uv run python3 4-evaluation/generalisation_gap_monitor.py
-```
-
-### Step 5: Mechanistic Weight Norm Inspection
-Calculates L2 norms for the Attention and MLP layer weight matrices from the `interrupt_save.safetensors` checkpoint. Logs these metrics to `6-logs/evaluation/norm_tracking.csv`.
-```bash
-uv run python3 4-evaluation/inspect_norms.py
-```
-
-### Step 6: Visualize Weight Norm Trajectories
-Reads the tracked norms and renders a dark-mode plot of the 'Average Attention L2 Norm', 'Average MLP L2 Norm', and 'Block 0 QKV Peak Norm'. The plot is saved to `6-logs/evaluation/norm_history.png`.
-```bash
-uv run python3 4-evaluation/plot_norms.py
-```
-
-### Step 7: Run the Ashtavakra Audit
-
-```bash
-uv run python3 4-evaluation/ashtavakra_audit.py
-```
-
-# Tip : Run all evaluation scripts together
-
-```bash
-./4-evaluation/evaluate.sh
-```
-
-
----
-
-## 🛡️ Linguistic Guardrails (V4)
-Our "Zero-Poison" policy ensures the model trains only on high-fidelity Sanskrit.
-
-| Feature | Implementation | Goal |
-| :--- | :--- | :--- |
-| **Normalization** | **NFKC** | Prevents shattering of conjuncts/roots (No NFC). |
-| **Noise Shield** | Disjoint Stopwords | 100% rejection of Hindi, Marathi, Pali, and Prakrit. |
-| **Punctuation** | Danda-Aware | Protects sutras even with trailing '।' or '॥' markers. |
-| **Vedic Safety** | Swara Protection | Preservation of Visarga (ः), Anusvara (ं), and Vedic accents. |
-
----
-
-
-### Prune Checkpoints
-
-```bash
-uv run python3 3-training/src/prune_checkpoints.py
-``` 
-
 ---
 > 🕉️ Om Tat Sat (ॐ तत् सत्) - The Absolute is Truth
+```

@@ -1,52 +1,68 @@
 import os
 import re
 import shutil
+import sys
+from pathlib import Path
 
-input_file = '1-data/02-purified/corpus.txt'
-output_file = '1-data/02-purified/corpus_refined.txt'
-
-target_words = ['है', 'करना', 'सबहि', 'बिप्र', 'कहहु']
-
-target_pattern = re.compile(r'\b(?:' + '|'.join(target_words) + r')\b')
-
-lines_processed = 0
-lines_kept = 0
-lines_discarded_words = 0
-lines_discarded_awadhi = 0
-total_chars_remaining = 0
-
-print(f"Starting refinement on {input_file}...")
+# DGX Path Resolution
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent
+sys.path.append(str(project_root))
 
 try:
-    with open(input_file, 'r', encoding='utf-8') as infile, \
-         open(output_file, 'w', encoding='utf-8') as outfile:
+    import config
+    INPUT_FILE = config.PURIFIED_DATA_DIR / "corpus.txt"
+    OUTPUT_FILE = config.PURIFIED_DATA_DIR / "corpus_refined.txt"
+except ImportError:
+    INPUT_FILE = Path('1-data/02-purified/corpus.txt')
+    OUTPUT_FILE = Path('1-data/02-purified/corpus_refined.txt')
+
+# Expanded Hindi/Vernacular "Poison" List
+# Added common markers like 'और' (and), 'भी' (also), 'था' (was)
+target_words = ['है', 'करना', 'सबहि', 'बिप्र', 'कहहु', 'और', 'भी', 'था', 'होता', 'गया']
+target_pattern = re.compile(r'(?<![\u0900-\u097F])(?:' + '|'.join(target_words) + r')(?![\u0900-\u097F])')
+
+def refine():
+    lines_processed = 0
+    lines_kept = 0
+    lines_discarded_words = 0
+    lines_discarded_awadhi = 0
+    total_chars_remaining = 0
+
+    print(f"--- SAGE-GPT LINGUISTIC SCALPEL ---")
+    print(f"Targeting: {INPUT_FILE.name}")
+
+    if not INPUT_FILE.exists():
+        print(f"Error: {INPUT_FILE} not found!")
+        return
+
+    with open(INPUT_FILE, 'r', encoding='utf-8') as infile, \
+         open(OUTPUT_FILE, 'w', encoding='utf-8') as outfile:
         
         for line in infile:
             lines_processed += 1
             stripped = line.strip()
-            
-            if not stripped:
-                continue
+            if not stripped: continue
                 
-            # 1. Reject specific noise words
+            # 1. Reject specific Hindi noise words
             if target_pattern.search(stripped):
                 lines_discarded_words += 1
                 continue
                 
-            # 2. Reject Awadhi markers
-            # Endings in 'उ' (\u0909) or 'हि' (\u0939\u093F) or 'हिं' (\u0939\u093F\u0902)
-            # Actually, "उ" is U (vowel), "हि" is hi. Let's just match word ending.
-            # Easiest way is to clean puntuation then check endings.
+            # 2. Awadhi Marker Check
+            # Sanskrit 'u' usually uses the matra (ु), but Awadhi often uses the full vowel (उ) at word ends.
+            # Sanskrit 'hi' (हि) is valid, but having it on 50% of words is a sign of Awadhi poetry (Ramcharitmanas style).
             words = [w.strip('।॥.,?!;:()[]{}') for w in stripped.split()]
-            if not words:
-                continue
+            if not words: continue
                 
-            awadhi_count = 0
+            awadhi_markers = 0
             for w in words:
+                # Target: Word-final 'u' vowel or 'hi/hin' vernacular endings
                 if w.endswith('उ') or w.endswith('हि') or w.endswith('हिं'):
-                    awadhi_count += 1
+                    awadhi_markers += 1
             
-            if (awadhi_count / len(words)) > 0.4:
+            # Threshold: 50% is safer for Sanskrit to avoid killing 'hi' (indeed)
+            if (awadhi_markers / len(words)) >= 0.5:
                 lines_discarded_awadhi += 1
                 continue
                 
@@ -55,16 +71,16 @@ try:
             total_chars_remaining += len(stripped)
             lines_kept += 1
 
-    shutil.move(output_file, input_file)
+    # Atomically replace the original with the refined version
+    shutil.move(str(OUTPUT_FILE), str(INPUT_FILE))
     
-    print("\n--- FINAL REFINEMENT REPORT ---")
-    print(f"Total Lines Processed: {lines_processed}")
-    print(f"Lines Discarded (Hindi words): {lines_discarded_words}")
-    print(f"Lines Discarded (Awadhi markers >40%): {lines_discarded_awadhi}")
-    print(f"Total Lines Remaining: {lines_kept}")
-    print(f"Total Characters Remaining: {total_chars_remaining}")
-    print("-------------------------------\n")
-    print("Refinement Complete.")
+    print("\n--- REFINEMENT REPORT ---")
+    print(f"Processed   : {lines_processed:,}")
+    print(f"Hindi Noise : -{lines_discarded_words}")
+    print(f"Awadhi/Brij : -{lines_discarded_awadhi}")
+    print(f"Final Count : {lines_kept:,} lines")
+    print(f"Final Chars : {total_chars_remaining / 1e6:.2f} MB")
+    print("-------------------------\n")
 
-except Exception as e:
-    print(f"Error during refinement: {e}")
+if __name__ == "__main__":
+    refine()
