@@ -1,4 +1,4 @@
-# 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT-DGX)
+# 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT)
 
 > "To find the Sutra in the Signal."
 
@@ -18,13 +18,20 @@
 ### Step 1 & 2: Data Purification & Tokenization
 Transforms 14GB raw data into the 56.89M token pure corpus using NFKC normalization and the 8k Sutra Unigram tokenizer.
 ```bash
-uv run python3 1-data/src/prepare_data_v3.py
+uv run python3 1-data/05-scripts/visuddhi_v4.py
 ```
 
 ### Step 3: Train (Cross-Platform Orchestrator)
-Initiates the training loop via the root launcher. It automatically detects if you are on an NVIDIA DGX (launching PyTorch) or an Apple device (launching MLX).
+Initiates the training loop via the root launcher. It automatically detects if you are on an NVIDIA DGX or an Apple device.
+
+For **Apple Silicon (M1/M2/M3)** running MLX, use the standard launcher:
 ```bash
 uv run python3 train.py
+```
+
+For **NVIDIA DGX** (128GB+ VRAM), use the optimized high-throughput launcher without AEDT throttling:
+```bash
+uv run python3 train_dgx.py
 ```
 
 ### Step 3.5: Multi-Mode Inference
