@@ -1,4 +1,4 @@
-# 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT)
+# 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT-DGX)
 
 > "To find the Sutra in the Signal."
 
