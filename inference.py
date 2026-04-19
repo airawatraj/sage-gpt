@@ -12,9 +12,6 @@ def main():
     if has_cuda:
         print("[SAGE-LAUNCHER] Nvidia CUDA Environment Detected. Launching High-Performance PyTorch Engine...")
         script = Path("5-inference/inference_engine_pt.py")
-    else:
-        print("[SAGE-LAUNCHER] No CUDA Detected. Defaulting to Apple Silicon MLX Engine...")
-        script = Path("5-inference/inference_engine_mlx_v2.py")
 
     try:
         subprocess.run([sys.executable, str(script)], check=True)

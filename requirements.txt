@@ -1,6 +1,5 @@
 pymupdf
 sentencepiece
-mlx
 numpy
 tqdm
 pandas

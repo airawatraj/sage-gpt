@@ -9,7 +9,6 @@
 * **Tokenizer**: SentencePiece Unigram (8k Vocab, byte_fallback active, NFKC Strict).
 * **Training Engine**: Dual-Backend Architecture with AEDT-governed execution:
   * **NVIDIA DGX Support**: Utilizes PyTorch `bfloat16` Native Mixed Precision, `torch.compile` graph optimization, and FlashAttention for maximum high-performance cluster throughput.
-  * **Apple Silicon Support**: Native MLX engine optimized to keep the host's Apple unified memory free via mathematically stable Grad Accumulation.
 
 ---
 
@@ -24,18 +23,13 @@ uv run python3 1-data/05-scripts/visuddhi_v4.py
 ### Step 3: Train (Cross-Platform Orchestrator)
 Initiates the training loop via the root launcher. It automatically detects if you are on an NVIDIA DGX or an Apple device.
 
-For **Apple Silicon (M1/M2/M3)** running MLX, use the standard launcher:
-```bash
-uv run python3 train.py
-```
-
 For **NVIDIA DGX** (128GB+ VRAM), use the optimized high-throughput launcher without AEDT throttling:
 ```bash
 uv run python3 train_dgx.py
 ```
 
 ### Step 3.5: Multi-Mode Inference
-Deploy the interactive dual-mode inference shell on either DGX or MLX:
+Deploy the interactive dual-mode inference shell on DGX:
 ```bash
 uv run python3 inference.py
 ```

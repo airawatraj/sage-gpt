@@ -130,7 +130,6 @@ class TransformerLM(nn.Module):
 # --- Dual-Mode Inference Logic ---
 def sample_top_p(logits, temperature=0.8, top_p=0.9, repetition_penalty=1.2, seen_tokens=[]):
     if seen_tokens:
-        # Additive penalty exactly like the MLX implementation
         mask_np = np.zeros(logits.shape[-1], dtype=np.float32)
         mask_np[list(set(seen_tokens))] = repetition_penalty
         mask_pt = torch.tensor(mask_np, device=device).type_as(logits)

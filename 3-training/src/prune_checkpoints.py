@@ -8,7 +8,7 @@ sys.path.append(str(project_root))
 
 try:
     import config
-    CHECKPOINT_DIR = config.MODEL_DIR / "mlx" / "checkpoints"
+    CHECKPOINT_DIR = config.PT_CHECKPOINT_DIR
 except ImportError:
     print("Error: config.py not found. Please check your path structure.")
     sys.exit(1)
