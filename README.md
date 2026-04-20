@@ -1,9 +1,8 @@
-```markdown
 # 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT)
 
 > "To find the Sutra in the Signal."
 
-**Sage-GPT-48M-Sutra (DGX Foundry)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~72M ultra-pure Sanskrit tokens** (~223M characters). This model marks the transition from a Small Language Model (SLM) to a robust foundation model for Vedic and Classical Sanskrit logic, architected to induce **Grokking** (delayed generalization) through high-density data and high-overfitting training regimes.
+**Sage-GPT-48M-Sutra (NVIDIA DGX)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~132.7M ultra-pure Sanskrit tokens** (~224M characters). This model marks the transition from a Small Language Model (SLM) to a robust foundation model for Vedic and Classical Sanskrit logic, architected to induce **Grokking** (delayed generalization) through high-density data and high-overfitting training regimes.
 
 ## 🚀 DGX Specification Engine
 
@@ -35,7 +34,7 @@ uv run python3 1-data/05-scripts/refine_corpus.py
 ```
 
 ### Step 3: Sutra Tokenization (16k)
-Builds the unigram model using a 16,000-word vocabulary optimized for the ~88M token corpus.
+Builds the unigram model using a 16,000-word vocabulary optimized for the ~132.7M token corpus.
 ```bash
 uv run python3 2-tokenizer/sutra_tokenizer.py
 ```
@@ -97,4 +96,3 @@ uv run python3 inference.py
 
 ---
 > 🕉️ Om Tat Sat (ॐ तत् सत्) - The Absolute is Truth
-```
