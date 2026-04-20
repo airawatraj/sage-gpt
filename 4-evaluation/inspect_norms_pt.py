@@ -6,7 +6,7 @@ import csv
 from datetime import datetime
 
 def main():
-    checkpoint_path = Path("3-model/pt/checkpoints/interrupt_save.safetensors")
+    checkpoint_path = Path("3-model/pt/checkpoints/interrupt.safetensors")
     
     if not checkpoint_path.exists():
         print(f"Error: Checkpoint not found at {checkpoint_path}")

@@ -201,7 +201,7 @@ def main():
         print("Compiling model for ultra-fast generation...")
         model = torch.compile(model)
     
-    possible_ckpts = [CHECKPOINT_DIR / "interrupt_save.safetensors"]
+    possible_ckpts = [CHECKPOINT_DIR / "interrupt.safetensors"]
     possible_ckpts.extend(sorted(CHECKPOINT_DIR.glob("epoch_*.safetensors"), key=lambda p: int(p.stem.split("_")[1]), reverse=True))
     
     loaded_path = None

@@ -14,7 +14,7 @@ except ImportError:
     CHECKPOINT_DIR = project_root / "3-model/pt/checkpoints"
 
 def get_latest_checkpoint():
-    interrupt_ckpt = CHECKPOINT_DIR / "interrupt_save.safetensors"
+    interrupt_ckpt = CHECKPOINT_DIR / "interrupt.safetensors"
     if interrupt_ckpt.exists():
         return interrupt_ckpt
     checkpoints = list(CHECKPOINT_DIR.glob("epoch_*.safetensors"))

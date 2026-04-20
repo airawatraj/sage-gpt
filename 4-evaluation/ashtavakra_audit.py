@@ -21,7 +21,7 @@ except ImportError:
     CHECKPOINT_DIR = project_root / "3-model/pt/checkpoints"
     TOKENIZER_MODEL = project_root / "2-tokenizer/sutra_tokenizer.model"
 
-INTERRUPT_SAVE = CHECKPOINT_DIR / "interrupt_save.safetensors"
+INTERRUPT_SAVE = CHECKPOINT_DIR / "interrupt.safetensors"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
