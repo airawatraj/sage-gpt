@@ -25,7 +25,7 @@ except ImportError:
     print("❌ Error: config.py not found.")
     sys.exit(1)
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+DEVICE = "cuda"
 
 # --- SageGPT Architecture (Exact Replica of DGX Engine) ---
 
@@ -130,8 +130,7 @@ def generate(model, sp, prompt):
     seen_tokens = ids.copy()
     print(f"\nSutra-GPT >> {prompt}", end="", flush=True)
     model.eval()
-    device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
-    with torch.no_grad(), torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         start_pos = 0
         logits = model(x, start_pos=start_pos)
         start_pos += x.shape[1]

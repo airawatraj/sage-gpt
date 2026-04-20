@@ -55,7 +55,7 @@ LOG_FILE = config.LOG_DIR / "training" / "training_history_dgx.csv"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+DEVICE = "cuda"
 
 # --- Model Architecture (RMSNorm, RoPE, FlashAttention) ---
 
@@ -150,8 +150,7 @@ def estimate_loss(model, data, ctx):
         ix = np.random.randint(0, len(data) - ctx, 16)
         x = torch.stack([torch.from_numpy(data[i:i+ctx].astype(np.int64)) for i in ix]).to(DEVICE)
         y = torch.stack([torch.from_numpy(data[i+1:i+ctx+1].astype(np.int64)) for i in ix]).to(DEVICE)
-        device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
-        with torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             _, loss = model(x, y)
             losses.append(loss.item())
     model.train()
@@ -169,7 +168,14 @@ def main():
         print("🚀 Compiling Graph for GB10 Acceleration...")
         model = torch.compile(model)
     
-    optimizer = optim.AdamW(model.parameters(), lr=6e-4, weight_decay=0.1, betas=(0.9, 0.95))
+    param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': 0.1},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    optimizer = optim.AdamW(optim_groups, lr=6e-4, betas=(0.9, 0.95))
 
     step, tokens_processed, epoch = 0, 0, 0
     
@@ -237,8 +243,7 @@ def main():
                 x = torch.stack([torch.from_numpy(train_data[i:i+CONTEXT_LENGTH].astype(np.int64)) for i in ix]).to(DEVICE)
                 y = torch.stack([torch.from_numpy(train_data[i+1:i+CONTEXT_LENGTH+1].astype(np.int64)) for i in ix]).to(DEVICE)
                 
-                device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
-                with torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     _, loss = model(x, y)
                     loss = loss / GRAD_ACCUM_STEPS
                 
@@ -259,10 +264,9 @@ def main():
             
             # Verbose Terminal Logging
             if step % 20 == 0:
-                mem = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+                mem = torch.cuda.max_memory_allocated() / 1e9
                 exact_epoch = (step * step_tokens) / tokens_per_epoch
-                device_flag = "GPU" if DEVICE == "cuda" else "CPU"
-                print(f"[{device_flag}] [Step {step:5d}] Loss: {accum_loss:.4f} | LR: {lr:.2e} | {tps/1e6:.2f}M tok/s | Mem: {mem:.1f}GB | Epoch: {exact_epoch:.2f}")
+                print(f"[DGX Spark] [Step {step:5d}] Loss: {accum_loss:.4f} | LR: {lr:.2e} | {tps/1e6:.2f}M tok/s | Mem: {mem:.1f}GB | Epoch: {exact_epoch:.2f}")
 
             # CSV Logging & Validation
             if step % 200 == 0:
