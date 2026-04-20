@@ -73,11 +73,23 @@ class MultiHeadAttention(nn.Module):
         y = F.scaled_dot_product_attention(queries, keys, values, is_causal=(start_pos==0))
         return self.wo(y.transpose(1, 2).contiguous().view(B, L, D))
 
+class SwiGLU(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        hidden_dim = int(8 * n_embd / 3)
+        hidden_dim = 256 * ((hidden_dim + 255) // 256)
+        self.w1 = nn.Linear(n_embd, hidden_dim, bias=False)
+        self.w2 = nn.Linear(hidden_dim, n_embd, bias=False)
+        self.w3 = nn.Linear(n_embd, hidden_dim, bias=False)
+
+    def forward(self, x):
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
 class TransformerBlock(nn.Module):
     def __init__(self, n_embd, n_head):
         super().__init__()
         self.ln1, self.ln2, self.attn = RMSNorm(n_embd), RMSNorm(n_embd), MultiHeadAttention(n_embd, n_head)
-        self.mlp = nn.Sequential(nn.Linear(n_embd, 4 * n_embd, bias=False), nn.SiLU(), nn.Linear(4 * n_embd, n_embd, bias=False))
+        self.mlp = SwiGLU(n_embd)
     def forward(self, x, start_pos=0):
         return x + self.mlp(self.ln2(x + self.attn(self.ln1(x), start_pos=start_pos)))
 
