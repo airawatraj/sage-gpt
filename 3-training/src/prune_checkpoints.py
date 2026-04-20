@@ -28,6 +28,11 @@ def prune_checkpoints(keep=10, verbose=False):
     for file_path in files_to_delete:
         if verbose: print(f"🗑️ Pruning old epoch: {file_path.name}")
         file_path.unlink()
+        
+        # Prune associated optimizer state file
+        state_file = CHECKPOINT_DIR / f"{file_path.stem}_state.pt"
+        if state_file.exists():
+            state_file.unlink()
 
 if __name__ == "__main__":
     # Manual run remains verbose

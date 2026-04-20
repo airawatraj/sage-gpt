@@ -159,6 +159,35 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
 
     step, tokens_processed, epoch = 0, 0, 0
+    
+    # Auto-Resume Logic
+    ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]))
+    if ckpts:
+        latest = ckpts[-1]
+        epoch_num = int(latest.stem.split("_")[1])
+        print(f"🔄 Auto-Resuming from {latest.name}...")
+        
+        # Load Model Weights
+        model_state = load_file(str(latest))
+        if hasattr(model, '_orig_mod'):
+            model._orig_mod.load_state_dict(model_state)
+        else:
+            model.load_state_dict(model_state)
+            
+        # Load Optimizer State
+        state_path = CHECKPOINT_DIR / f"epoch_{epoch_num}_state.pt"
+        if state_path.exists():
+            checkpoint = torch.load(str(state_path), map_location="cpu", weights_only=False)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scaler.load_state_dict(checkpoint['scaler'])
+            step = checkpoint['step']
+            epoch = checkpoint['epoch']
+            tokens_processed = checkpoint['tokens_processed']
+            print(f"✅ State restored successfully: Epoch {epoch}, Step {step}")
+        else:
+            print("⚠️ Optimizer state missing. Model loaded, starting fresh Adam moments.")
+            epoch = epoch_num
+
     tokens_per_epoch = len(train_data)
     t0 = time.time()
 
@@ -225,6 +254,15 @@ def main():
                 state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
                 save_file(state_dict, str(save_path))
                 
+                # Save Optimizer and Engine State natively
+                torch.save({
+                    'optimizer': optimizer.state_dict(),
+                    'scaler': scaler.state_dict(),
+                    'step': step,
+                    'epoch': epoch,
+                    'tokens_processed': tokens_processed
+                }, str(CHECKPOINT_DIR / f"epoch_{epoch}_state.pt"))
+                
                 print(f"💾 Checkpoint Saved: {save_path}")
                 prune_checkpoints(keep=10) # Keep disk lean
             
@@ -235,6 +273,13 @@ def main():
         print("\n--- 🛑 SUTRA FOUNDRY HALTED: EMERGENCY SAVE ---")
         state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
         save_file(state_dict, str(CHECKPOINT_DIR / "interrupt.safetensors"))
+        torch.save({
+            'optimizer': optimizer.state_dict(),
+            'scaler': scaler.state_dict(),
+            'step': step,
+            'epoch': epoch,
+            'tokens_processed': tokens_processed
+        }, str(CHECKPOINT_DIR / "interrupt_state.pt"))
 
 if __name__ == "__main__":
     main()
