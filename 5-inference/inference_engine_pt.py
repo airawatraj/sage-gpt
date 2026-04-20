@@ -52,11 +52,25 @@ class MultiHeadAttention(nn.Module):
         self.n_head, self.n_embd = n_head, n_embd
         self.wq, self.wk, self.wv, self.wo = [nn.Linear(n_embd, n_embd, bias=False) for _ in range(4)]
         self.register_buffer("freqs_cis", precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH))
-    def forward(self, x):
+        self.k_cache = None
+        self.v_cache = None
+    def forward(self, x, start_pos=0):
         B, L, D = x.shape
-        xq, xk, xv = self.wq(x).view(B, L, self.n_head, -1), self.wk(x).view(B, L, self.n_head, -1), self.wv(x).view(B, L, self.n_head, -1).transpose(1, 2)
-        xq, xk = apply_rotary_emb(xq, xk, self.freqs_cis[:L])
-        y = F.scaled_dot_product_attention(xq.transpose(1, 2), xk.transpose(1, 2), xv, is_causal=True)
+        xq, xk, xv = self.wq(x).view(B, L, self.n_head, -1), self.wk(x).view(B, L, self.n_head, -1), self.wv(x).view(B, L, self.n_head, -1)
+        xq, xk = apply_rotary_emb(xq, xk, self.freqs_cis[start_pos:start_pos+L])
+        
+        if self.k_cache is None or self.k_cache.shape[0] != B or start_pos == 0:
+            self.k_cache = torch.zeros((B, CONTEXT_LENGTH, self.n_head, self.n_embd // self.n_head), device=x.device, dtype=x.dtype)
+            self.v_cache = torch.zeros((B, CONTEXT_LENGTH, self.n_head, self.n_embd // self.n_head), device=x.device, dtype=x.dtype)
+            
+        self.k_cache[:, start_pos:start_pos+L] = xk
+        self.v_cache[:, start_pos:start_pos+L] = xv
+        
+        keys = self.k_cache[:, :start_pos+L].transpose(1, 2)
+        values = self.v_cache[:, :start_pos+L].transpose(1, 2)
+        queries = xq.transpose(1, 2)
+        
+        y = F.scaled_dot_product_attention(queries, keys, values, is_causal=(start_pos==0))
         return self.wo(y.transpose(1, 2).contiguous().view(B, L, D))
 
 class TransformerBlock(nn.Module):
@@ -64,8 +78,8 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.ln1, self.ln2, self.attn = RMSNorm(n_embd), RMSNorm(n_embd), MultiHeadAttention(n_embd, n_head)
         self.mlp = nn.Sequential(nn.Linear(n_embd, 4 * n_embd, bias=False), nn.SiLU(), nn.Linear(4 * n_embd, n_embd, bias=False))
-    def forward(self, x):
-        return x + self.mlp(self.ln2(x + self.attn(self.ln1(x))))
+    def forward(self, x, start_pos=0):
+        return x + self.mlp(self.ln2(x + self.attn(self.ln1(x), start_pos=start_pos)))
 
 class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
@@ -73,9 +87,9 @@ class SageGPT(nn.Module):
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
-    def forward(self, x):
+    def forward(self, x, start_pos=0):
         x = self.tok_emb(x)
-        for layer in self.layers: x = layer(x)
+        for layer in self.layers: x = layer(x, start_pos=start_pos)
         return self.output(self.norm(x))
 
 # --- Sampling Logic ---
@@ -102,13 +116,28 @@ def generate(model, sp, prompt):
     print(f"\nSutra-GPT >> {prompt}", end="", flush=True)
     model.eval()
     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        for _ in range(100):
-            logits = model(x[:, -CONTEXT_LENGTH:])[:, -1, :]
-            token_id = sample_top_p(logits[0], seen_tokens=seen_tokens)
-            if token_id == sp.eos_id(): break 
+        start_pos = 0
+        logits = model(x, start_pos=start_pos)
+        start_pos += x.shape[1]
+        
+        token_id = sample_top_p(logits[:, -1, :][0], seen_tokens=seen_tokens)
+        if token_id == sp.eos_id(): 
+            print("\n")
+            return
+            
+        print(sp.decode([token_id]), end="", flush=True)
+        seen_tokens.append(token_id)
+        
+        for _ in range(99):
+            x_next = torch.tensor([[token_id]], device=DEVICE)
+            logits = model(x_next, start_pos=start_pos)
+            start_pos += 1
+            
+            token_id = sample_top_p(logits[0][0], seen_tokens=seen_tokens)
+            if token_id == sp.eos_id(): break
+            
             print(sp.decode([token_id]), end="", flush=True)
             seen_tokens.append(token_id)
-            x = torch.cat([x, torch.tensor([[token_id]], device=DEVICE)], dim=1)
     print("\n")
 
 def main():

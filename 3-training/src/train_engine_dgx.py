@@ -146,8 +146,8 @@ def estimate_loss(model, data, ctx):
 def main():
     print(f"--- 🕉️ SAGE-GPT DGX FOUNDRY: INITIALIZING ---")
     
-    # Memory Map the Purified Corpus
-    data = np.memmap(DATA_PATH, dtype=np.uint16, mode='r')
+    # Memory Load the Purified Corpus into Shared LPDDR5X (Zero Copy on GB10)
+    data = np.fromfile(DATA_PATH, dtype=np.uint16)
     train_data, val_data = data[:int(len(data)*0.95)], data[int(len(data)*0.95):]
 
     model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
