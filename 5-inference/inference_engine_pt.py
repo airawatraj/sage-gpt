@@ -91,7 +91,8 @@ class TransformerBlock(nn.Module):
         self.ln1, self.ln2, self.attn = RMSNorm(n_embd), RMSNorm(n_embd), MultiHeadAttention(n_embd, n_head)
         self.mlp = SwiGLU(n_embd)
     def forward(self, x, start_pos=0):
-        return x + self.mlp(self.ln2(x + self.attn(self.ln1(x), start_pos=start_pos)))
+        x = x + self.attn(self.ln1(x), start_pos=start_pos)
+        return x + self.mlp(self.ln2(x))
 
 class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
@@ -110,7 +111,8 @@ def sample_top_p(logits, temperature=0.8, top_p=0.9, repetition_penalty=1.5, see
     if seen_tokens is None: seen_tokens = []
     if seen_tokens:
         for tid in set(seen_tokens):
-            logits[tid] /= repetition_penalty
+            score = logits[tid]
+            logits[tid] = score * repetition_penalty if score < 0 else score / repetition_penalty
     logits = logits / max(temperature, 1e-5)
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)

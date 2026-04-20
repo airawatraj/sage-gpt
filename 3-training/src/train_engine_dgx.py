@@ -116,7 +116,8 @@ class TransformerBlock(nn.Module):
         self.attn = MultiHeadAttention(n_embd, n_head)
         self.mlp = SwiGLU(n_embd)
     def forward(self, x):
-        return x + self.mlp(self.ln2(x + self.attn(self.ln1(x))))
+        x = x + self.attn(self.ln1(x))
+        return x + self.mlp(self.ln2(x))
 
 class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
@@ -169,7 +170,6 @@ def main():
         model = torch.compile(model)
     
     optimizer = optim.AdamW(model.parameters(), lr=6e-4, weight_decay=0.1, betas=(0.9, 0.95))
-    scaler = torch.cuda.amp.GradScaler()
 
     step, tokens_processed, epoch = 0, 0, 0
     
@@ -188,7 +188,6 @@ def main():
         if interrupt_state.exists():
             checkpoint = torch.load(str(interrupt_state), map_location="cpu", weights_only=False)
             optimizer.load_state_dict(checkpoint['optimizer'])
-            scaler.load_state_dict(checkpoint['scaler'])
             step = checkpoint['step']
             epoch = checkpoint['epoch']
             tokens_processed = checkpoint['tokens_processed']
@@ -214,7 +213,6 @@ def main():
             if state_path.exists():
                 checkpoint = torch.load(str(state_path), map_location="cpu", weights_only=False)
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                scaler.load_state_dict(checkpoint['scaler'])
                 step = checkpoint['step']
                 epoch = checkpoint['epoch']
                 tokens_processed = checkpoint['tokens_processed']
@@ -245,12 +243,10 @@ def main():
                     loss = loss / GRAD_ACCUM_STEPS
                 
                 accum_loss += loss.item()
-                scaler.scale(loss).backward()
+                loss.backward()
 
-            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
 
             # Metrics
             step_tokens = TOTAL_BATCH_SIZE * CONTEXT_LENGTH
@@ -299,7 +295,6 @@ def main():
                 # Save Optimizer and Engine State natively
                 torch.save({
                     'optimizer': optimizer.state_dict(),
-                    'scaler': scaler.state_dict(),
                     'step': step,
                     'epoch': epoch,
                     'tokens_processed': tokens_processed
@@ -317,7 +312,6 @@ def main():
         save_file(state_dict, str(CHECKPOINT_DIR / "interrupt.safetensors"))
         torch.save({
             'optimizer': optimizer.state_dict(),
-            'scaler': scaler.state_dict(),
             'step': step,
             'epoch': epoch,
             'tokens_processed': tokens_processed
