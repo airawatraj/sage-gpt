@@ -3,79 +3,66 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 
-# Setup strict paths
+# --- Strict Path Alignment ---
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent
 sys.path.append(str(project_root))
 
 try:
     import config
+    LOG_FILE = config.LOG_DIR / "evaluation" / "norm_tracking_pt.csv"
+    OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "norm_history.png"
 except ImportError:
-    print("Error: config.py not found.")
-    sys.exit(1)
-
-LOG_FILE = config.LOG_DIR / "evaluation" / "norm_tracking.csv"
-OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "norm_history.png"
+    LOG_FILE = Path("6-logs/evaluation/norm_tracking_pt.csv")
+    OUTPUT_PLOT = Path("6-logs/evaluation/norm_history.png")
 
 def plot_norms():
     if not LOG_FILE.exists():
-        print(f"[SAGE-ARCH] Error: No log found at {LOG_FILE}")
+        print(f"⚠️  No data found at {LOG_FILE}. Run the inspector first.")
         return
 
-    # Read data
-    try:
-        df = pd.read_csv(LOG_FILE)
-    except Exception as e:
-        print(f"[SAGE-ARCH] Error reading CSV: {e}")
-        return
-
+    # 1. Load and Clean
+    df = pd.read_csv(LOG_FILE)
     if df.empty:
-        print("[SAGE-ARCH] Not enough data to plot.")
+        print("⚠️  CSV is empty.")
         return
 
-    # Convert specific columns to numeric, dropping NaNs or handling bad parsing
-    df['Average Attention L2 Norm'] = pd.to_numeric(df['Average Attention L2 Norm'], errors='coerce')
-    df['Average MLP L2 Norm'] = pd.to_numeric(df['Average MLP L2 Norm'], errors='coerce')
-    df['Block 0 QKV Peak Norm'] = pd.to_numeric(df['Block 0 QKV Peak Norm'], errors='coerce')
+    # 2. Sort by Epoch so the lines flow correctly
+    df['Epoch'] = df['Checkpoint'].str.extract(r'(\d+)').astype(float)
+    df = df.sort_values(by='Epoch').reset_index(drop=True)
 
-    # Convert Timestamp to datetime for sequential plotting if steps aren't explicitly tracked
-    # We can just plot against row index or time, row index (representing checkpoints) is straightforward
-    df = df.reset_index()
-    
-    # Drop rows where all of our target columns are NaN
-    df = df.dropna(subset=['Average Attention L2 Norm', 'Average MLP L2 Norm', 'Block 0 QKV Peak Norm'], how='all')
-
-    if df.empty:
-        print("[SAGE-ARCH] Not enough valid quantitative data to plot.")
-        return
-
+    # 3. Visualization Setup
     plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(14, 7))
+    fig, ax1 = plt.subplots(figsize=(16, 9))
     
-    # Plot curves
-    ax.plot(df.index, df['Average Attention L2 Norm'], label='Avg Attn L2 Norm', color='#8FBC8F', linewidth=2.0, alpha=0.9, marker='o')
-    ax.plot(df.index, df['Average MLP L2 Norm'], label='Avg MLP L2 Norm', color='#F4A460', linewidth=2.0, alpha=0.9, marker='o')
-    ax.plot(df.index, df['Block 0 QKV Peak Norm'], label='Block 0 QKV Peak Norm', color='#87CEFA', linewidth=2.0, alpha=0.9, marker='o')
+    # Left Axis: L2 Norms
+    ln1 = ax1.plot(df['Epoch'], df['Avg_Attn_Norm'], label='Avg Attention L2', 
+                   color='#8FBC8F', linewidth=2.5, marker='o', markersize=6)
+    ln2 = ax1.plot(df['Epoch'], df['Avg_MLP_Norm'], label='Avg MLP L2', 
+                   color='#F4A460', linewidth=2.5, marker='s', markersize=6)
     
-    # Extract latest values for the title if available
-    latest_attn = df['Average Attention L2 Norm'].dropna().iloc[-1] if not df['Average Attention L2 Norm'].dropna().empty else float('nan')
-    latest_mlp = df['Average MLP L2 Norm'].dropna().iloc[-1] if not df['Average MLP L2 Norm'].dropna().empty else float('nan')
+    ax1.set_xlabel('Epochs', fontsize=12, color='#AAAAAA')
+    ax1.set_ylabel('Macro L2 Norm', fontsize=12, color='#AAAAAA')
+    
+    # Right Axis: Peak Intensity (Stability)
+    ax2 = ax1.twinx()
+    ln3 = ax2.plot(df['Epoch'], df['Peak_Value'], label='Global Peak Intensity', 
+                   color='#87CEFA', linewidth=1.8, linestyle='--', marker='v', alpha=0.7)
+    ax2.set_ylabel('Peak Weight Intensity', fontsize=12, color='#87CEFA')
 
-    ax.set_title(f"SAGE-GPT Weight Norm Micro-Contractions\nLatest Attn: {latest_attn:.4f} | MLP: {latest_mlp:.4f}", fontsize=14, pad=15)
+    # Metadata
+    plt.title(f"SAGE-GPT MECHANISTIC CONTRACTIONS\nLatest Epoch: {int(df['Epoch'].iloc[-1])}", 
+              fontsize=16, pad=20, fontweight='bold')
     
-    # Use checkpoint names or index for x-axis
-    ax.set_xlabel('Checkpoint Tracking Index', fontsize=12)
-    ax.set_ylabel('Norm Magnitude', fontsize=12)
+    lns = ln1 + ln2 + ln3
+    labs = [l.get_label() for l in lns]
+    ax1.legend(lns, labs, loc='upper left', framealpha=0.1)
     
-    ax.grid(True, which="both", linestyle='-', alpha=0.15)
-    ax.legend(loc='upper right', framealpha=0.3)
-    
-    # Ensure output directory exists before saving
+    # 4. Save the actual PNG
     OUTPUT_PLOT.parent.mkdir(parents=True, exist_ok=True)
-    
     plt.tight_layout()
-    plt.savefig(OUTPUT_PLOT, dpi=300, facecolor=fig.get_facecolor())
-    print(f"[SAGE-ARCH] Norm visualization rendered to: {OUTPUT_PLOT}")
+    plt.savefig(OUTPUT_PLOT, dpi=300)
+    print(f"✅ [SUCCESS] PNG rendered to: {OUTPUT_PLOT}")
 
 if __name__ == "__main__":
     plot_norms()

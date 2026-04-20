@@ -3,93 +3,107 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 
-# Setup strict paths
+# --- Strict Path Alignment ---
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent
 sys.path.append(str(project_root))
 
 try:
     import config
+    # Synchronized with train_engine_dgx.py output
+    LOG_FILE = config.LOG_DIR / "training" / "training_history_dgx.csv"
+    OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "generalisation_gap.png"
+    WARMUP_STEPS = 1000 # Matches your current training engine configuration
 except ImportError:
-    print("Error: config.py not found.")
+    print("❌ Critical: config.py not found. Engine cannot resolve paths.")
     sys.exit(1)
-
-LOG_FILE = config.LOG_DIR / "training" / "training_history.csv"
-OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "generalisation_gap.png"
-
-# Hyperparameters
-WARMUP_STEPS = 2000
 
 def plot_curves():
     if not LOG_FILE.exists():
-        print(f"[SAGE-ARCH] Error: No log found at {LOG_FILE}")
+        print(f"⚠️  [SAGE-GAP] No log found at {LOG_FILE}. Waiting for next engine flush...")
         return
 
-    # Read and clean data
-    df = pd.read_csv(LOG_FILE)
-    df['Step'] = pd.to_numeric(df['Step'], errors='coerce')
-    df['Train_Loss'] = pd.to_numeric(df['Train_Loss'], errors='coerce')
-    df['Val_Loss'] = pd.to_numeric(df['Val_Loss'], errors='coerce')
-    
-    # Sort by step to align appended data
-    df = df.sort_values(by='Step')
-
-    train_df = df.dropna(subset=['Train_Loss']).copy()
-    val_df = df.dropna(subset=['Val_Loss'])
-
-    if train_df.empty or val_df.empty:
-        print("[SAGE-ARCH] Not enough data to plot.")
+    # 1. Load and Clean (The "No Shortcuts" Data Hygiene)
+    try:
+        df = pd.read_csv(LOG_FILE)
+    except Exception as e:
+        print(f"❌ Error reading CSV: {e}")
         return
 
-    train_df['Train_Loss_Var'] = train_df['Train_Loss'].rolling(window=50, min_periods=1).var()
-
-    latest_tr = train_df['Train_Loss'].iloc[-1]
-    latest_val = val_df['Val_Loss'].iloc[-1]
+    # Ensure numeric types for all critical columns
+    cols_to_fix = ['Step', 'Train_Loss', 'Val_Loss']
+    for col in cols_to_fix:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # Calculate grokking detection trigger
-    # Only if we have at least 6 validation points
-    if len(val_df) >= 6:
-        recent_val_avg = val_df['Val_Loss'].iloc[-6:-1].mean()
+    # Sort by step to ensure a continuous line if data was appended out of order
+    df = df.sort_values(by='Step').dropna(subset=['Train_Loss', 'Val_Loss'])
+
+    if len(df) < 2:
+        print("⚠️  [SAGE-GAP] Not enough data points to calculate variance or gap.")
+        return
+
+    # 2. Calculate Mechanistic Metrics
+    # Turbulence: Rolling variance identifies 'instability' before a grokking shift
+    df['Train_Var'] = df['Train_Loss'].rolling(window=10, min_periods=1).var()
+    # The Gap: Quantifying the distance between memorization and generalization
+    df['Gap'] = df['Val_Loss'] - df['Train_Loss']
+
+    latest_tr = df['Train_Loss'].iloc[-1]
+    latest_val = df['Val_Loss'].iloc[-1]
+    latest_gap = df['Gap'].iloc[-1]
+    
+    # 3. Grokking Detection (The Phase Transition Alarm)
+    if len(df) >= 10:
+        recent_val_avg = df['Val_Loss'].iloc[-10:-1].mean()
         drop_pct = (recent_val_avg - latest_val) / recent_val_avg
         
         if drop_pct > 0.05:
-            # \a chimes the terminal bell, \033[1;31m sets bold red text
-            print(f"\a\033[1;31m[SAGE-GROK-DETECTED] ALARM: Validation loss dropped by {drop_pct*100:.2f}%! Phase transition initiated.\033[0m")
-            print(f"\033[1;31mRecent Avg: {recent_val_avg:.4f} -> Latest Val: {latest_val:.4f}\033[0m")
+            print(f"\n\a\033[1;31m🔥 [SAGE-GROK-DETECTED] PHASE TRANSITION ALERT!")
+            print(f"Validation loss dropped by {drop_pct*100:.2f}% relative to recent average.")
+            print(f"Generalization Gap is narrowing: {latest_gap:.4f}\033[0m\n")
 
+    # 4. Professional Visualization
     plt.style.use('dark_background')
-    fig, (ax1, ax2) = plt.subplots(nrows=2, figsize=(14, 9), gridspec_kw={'height_ratios': [3, 1]})
+    fig, (ax1, ax2) = plt.subplots(nrows=2, figsize=(14, 10), sharex=True, 
+                                   gridspec_kw={'height_ratios': [3, 1]})
     
-    # Plot curves
-    ax1.plot(train_df['Step'], train_df['Train_Loss'], label='Train Loss', color='#8FBC8F', linewidth=1.5, alpha=0.9)
-    ax1.plot(val_df['Step'], val_df['Val_Loss'], label='Val Loss', color='#F4A460', linewidth=2.0, alpha=0.9)
+    # --- Top Plot: The Loss Landscape ---
+    ax1.plot(df['Step'], df['Train_Loss'], label='Train Loss (Memorization)', 
+             color='#8FBC8F', linewidth=1.5, alpha=0.8)
+    ax1.plot(df['Step'], df['Val_Loss'], label='Val Loss (Generalization)', 
+             color='#F4A460', linewidth=2.5, alpha=0.9)
     
-    # Warmup Marker
-    ax1.axvline(x=WARMUP_STEPS, color='gray', linestyle='--', label='Warmup End', alpha=0.6)
-
-    # Log Scale
+    # Mark the end of the warmup phase
+    ax1.axvline(x=WARMUP_STEPS, color='#555555', linestyle='--', label='Warmup End', alpha=0.5)
+    
     ax1.set_yscale('log')
+    ax1.set_ylabel('Cross Entropy Loss', fontsize=12, labelpad=10)
+    ax1.set_title(f"SAGE-GPT Generalization Monitor\nGap: {latest_gap:.4f} | Steps: {int(df['Step'].iloc[-1])}", 
+                  fontsize=16, pad=20, fontweight='bold')
+    ax1.legend(loc='upper right', framealpha=0.1)
+    ax1.grid(True, which="both", linestyle='-', alpha=0.05)
+
+    # --- Bottom Plot: The Gap & Turbulence ---
+    # Shaded region for the Generalization Gap
+    ax2.fill_between(df['Step'], df['Gap'], color='#FF6347', alpha=0.15, label='Generalization Gap')
+    ax2.plot(df['Step'], df['Gap'], color='#FF6347', linewidth=1.2, alpha=0.7)
     
-    ax1.set_title(f"SAGE-GPT Learning Curves (Grokking Regime)\nLatest Tr: {latest_tr:.4f} | Val: {latest_val:.4f}", fontsize=14, pad=15)
-    # Move x-axis label to the bottom subplot
-    ax1.set_ylabel('Loss (Log Scale)', fontsize=12)
-    # Remove x-axis tick labels for top subplot to keep it clean (optional, but requested layout is minimal)
-    # Actually, keep it simple. Let's just set the grid and legend.
-    ax1.grid(True, which="both", linestyle='-', alpha=0.15)
-    ax1.legend(loc='upper right', framealpha=0.3)
+    # Secondary axis for Loss Turbulence (Variance)
+    ax3 = ax2.twinx()
+    ax3.plot(df['Step'], df['Train_Var'], color='#87CEFA', label='Loss Turbulence', 
+             linewidth=1, linestyle=':', alpha=0.6)
+    ax3.set_yscale('log')
+    ax3.set_ylabel('Turbulence', color='#87CEFA', fontsize=10)
     
-    # Variance plot
-    ax2.plot(train_df['Step'], train_df['Train_Loss_Var'], label='Training Loss Turbulence (50-Step Rolling Variance)', color='#FF6347', linewidth=1.5, alpha=0.9)
-    ax2.set_xlabel('Steps', fontsize=12)
-    ax2.set_ylabel('Variance', fontsize=12)
-    ax2.set_yscale('log')
-    ax2.grid(True, which="both", linestyle='-', alpha=0.15)
-    ax2.legend(loc='upper right', framealpha=0.3)
+    ax2.set_xlabel('Global Training Steps', fontsize=12, labelpad=10)
+    ax2.set_ylabel('The Gap', fontsize=12, labelpad=10)
+    ax2.legend(loc='upper left', framealpha=0.1)
     
-    OUTPUT_PLOT.parent.mkdir(parents=True, exist_ok=True)
+    # 5. Final Rendering
     plt.tight_layout()
-    plt.savefig(OUTPUT_PLOT, dpi=300, facecolor=fig.get_facecolor())
-    print(f"[SAGE-ARCH] Gap monitor rendered to: {OUTPUT_PLOT}")
+    OUTPUT_PLOT.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(OUTPUT_PLOT, dpi=300, facecolor='#0B0B0B')
+    print(f"📊 [SUCCESS] Production gap monitor rendered to: {OUTPUT_PLOT}")
 
 if __name__ == "__main__":
     plot_curves()
