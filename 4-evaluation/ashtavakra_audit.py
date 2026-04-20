@@ -22,7 +22,7 @@ except ImportError:
 
 # UPDATE THIS TO YOUR LATEST EPOCH
 CHECKPOINT_PATH = CHECKPOINT_DIR / "epoch_11.safetensors" 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
 
 # --- SageGPT Architecture (Must Match Training Engine) ---
 class RMSNorm(nn.Module):

@@ -55,7 +55,7 @@ LOG_FILE = config.LOG_DIR / "training" / "training_history_dgx.csv"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
 
 # --- Model Architecture (RMSNorm, RoPE, FlashAttention) ---
 
@@ -149,7 +149,8 @@ def estimate_loss(model, data, ctx):
         ix = np.random.randint(0, len(data) - ctx, 16)
         x = torch.stack([torch.from_numpy(data[i:i+ctx].astype(np.int64)) for i in ix]).to(DEVICE)
         y = torch.stack([torch.from_numpy(data[i+1:i+ctx+1].astype(np.int64)) for i in ix]).to(DEVICE)
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
+        with torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
             _, loss = model(x, y)
             losses.append(loss.item())
     model.train()
@@ -238,7 +239,8 @@ def main():
                 x = torch.stack([torch.from_numpy(train_data[i:i+CONTEXT_LENGTH].astype(np.int64)) for i in ix]).to(DEVICE)
                 y = torch.stack([torch.from_numpy(train_data[i+1:i+CONTEXT_LENGTH+1].astype(np.int64)) for i in ix]).to(DEVICE)
                 
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
+                with torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
                     _, loss = model(x, y)
                     loss = loss / GRAD_ACCUM_STEPS
                 
@@ -279,10 +281,16 @@ def main():
                     writer.writerow([datetime.now().isoformat(), step, f"{accum_loss:.4f}", f"{v_loss:.4f}", f"{lr:.2e}", f"{tps:.0f}", f"{mem:.2f}"])
 
             # Checkpointing & Auto-Pruning
-            if tokens_processed >= tokens_per_epoch or (step > 0 and step % 500 == 0):
+            is_epoch_boundary = False
+            while tokens_processed >= tokens_per_epoch:
                 epoch += 1
-                tokens_processed = 0
-                save_path = CHECKPOINT_DIR / f"epoch_{epoch}.safetensors"
+                tokens_processed -= tokens_per_epoch
+                is_epoch_boundary = True
+
+            if is_epoch_boundary or (step > 0 and step % 500 == 0):
+                existing_ckpts = [int(p.stem.split("_")[1]) for p in CHECKPOINT_DIR.glob("epoch_*.safetensors") if len(p.stem.split("_")) > 1 and p.stem.split("_")[1].isdigit()]
+                save_idx = max(existing_ckpts) + 1 if existing_ckpts else 1
+                save_path = CHECKPOINT_DIR / f"epoch_{save_idx}.safetensors"
                 
                 # Unwrap compiled model for clean saving
                 state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
@@ -295,7 +303,7 @@ def main():
                     'step': step,
                     'epoch': epoch,
                     'tokens_processed': tokens_processed
-                }, str(CHECKPOINT_DIR / f"epoch_{epoch}_state.pt"))
+                }, str(CHECKPOINT_DIR / f"epoch_{save_idx}_state.pt"))
                 
                 print(f"💾 Checkpoint Saved: {save_path}")
                 prune_checkpoints(keep=10) # Keep disk lean

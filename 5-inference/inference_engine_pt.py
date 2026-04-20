@@ -25,7 +25,7 @@ except ImportError:
     print("❌ Error: config.py not found.")
     sys.exit(1)
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
 
 # --- SageGPT Architecture (Exact Replica of DGX Engine) ---
 
@@ -106,7 +106,8 @@ class SageGPT(nn.Module):
 
 # --- Sampling Logic ---
 
-def sample_top_p(logits, temperature=0.8, top_p=0.9, repetition_penalty=1.5, seen_tokens=[]):
+def sample_top_p(logits, temperature=0.8, top_p=0.9, repetition_penalty=1.5, seen_tokens=None):
+    if seen_tokens is None: seen_tokens = []
     if seen_tokens:
         for tid in set(seen_tokens):
             logits[tid] /= repetition_penalty
@@ -115,7 +116,7 @@ def sample_top_p(logits, temperature=0.8, top_p=0.9, repetition_penalty=1.5, see
     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
     sorted_indices_to_remove = cumulative_probs > top_p
     sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-    sorted_indices_to_remove[..., 0] = 0
+    sorted_indices_to_remove[..., 0] = False
     sorted_logits[sorted_indices_to_remove] = float('-inf')
     probs = F.softmax(sorted_logits, dim=-1)
     next_token = torch.multinomial(probs, num_samples=1)
@@ -127,7 +128,8 @@ def generate(model, sp, prompt):
     seen_tokens = ids.copy()
     print(f"\nSutra-GPT >> {prompt}", end="", flush=True)
     model.eval()
-    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    device_type_autocast = "cuda" if "cuda" in DEVICE else "cpu"
+    with torch.no_grad(), torch.autocast(device_type=device_type_autocast, dtype=torch.bfloat16):
         start_pos = 0
         logits = model(x, start_pos=start_pos)
         start_pos += x.shape[1]
@@ -141,6 +143,7 @@ def generate(model, sp, prompt):
         seen_tokens.append(token_id)
         
         for _ in range(99):
+            if start_pos >= CONTEXT_LENGTH: break
             x_next = torch.tensor([[token_id]], device=DEVICE)
             logits = model(x_next, start_pos=start_pos)
             start_pos += 1

@@ -1,7 +1,7 @@
 # Auto-generated config by setup_factory.py
 from pathlib import Path
 
-PROJECT_ROOT = Path("/home/airawatraj/code/rawatlabs/sage-gpt").expanduser().resolve()
+PROJECT_ROOT = Path(__file__).resolve().parent
 ROOT_DIR = PROJECT_ROOT
 
 RAW_DATA_DIR = PROJECT_ROOT / "1-data/01-raw"
