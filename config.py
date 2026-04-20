@@ -31,7 +31,7 @@ for directory in [RAW_DATA_DIR, PURIFIED_DATA_DIR, TOKENIZED_DATA_DIR, META_DATA
 
 # DGX-Optimized "Sage-GPT" Specs
 MODEL_NAME = "Sage-GPT-48M-Sutra"
-DATA_STATS = "~72M Tokens (~223M Characters) 223 MB"
+DATA_STATS = "132.7M Tokens (224MB Characters)"
 VOCAB_SIZE = 16000 
 CONTEXT_LENGTH = 1024 
 EMBED_DIM = 512
