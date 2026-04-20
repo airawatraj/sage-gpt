@@ -173,32 +173,54 @@ def main():
     step, tokens_processed, epoch = 0, 0, 0
     
     # Auto-Resume Logic
-    ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]))
-    if ckpts:
-        latest = ckpts[-1]
-        epoch_num = int(latest.stem.split("_")[1])
-        print(f"🔄 Auto-Resuming from {latest.name}...")
-        
-        # Load Model Weights
-        model_state = load_file(str(latest))
+    interrupt_ckpt = CHECKPOINT_DIR / "interrupt.safetensors"
+    interrupt_state = CHECKPOINT_DIR / "interrupt_state.pt"
+    
+    if interrupt_ckpt.exists():
+        print(f"🚑 Rescue Mission: Auto-Resuming from Emergency Save ({interrupt_ckpt.name})...")
+        model_state = load_file(str(interrupt_ckpt))
         if hasattr(model, '_orig_mod'):
             model._orig_mod.load_state_dict(model_state)
         else:
             model.load_state_dict(model_state)
             
-        # Load Optimizer State
-        state_path = CHECKPOINT_DIR / f"epoch_{epoch_num}_state.pt"
-        if state_path.exists():
-            checkpoint = torch.load(str(state_path), map_location="cpu", weights_only=False)
+        if interrupt_state.exists():
+            checkpoint = torch.load(str(interrupt_state), map_location="cpu", weights_only=False)
             optimizer.load_state_dict(checkpoint['optimizer'])
             scaler.load_state_dict(checkpoint['scaler'])
             step = checkpoint['step']
             epoch = checkpoint['epoch']
             tokens_processed = checkpoint['tokens_processed']
-            print(f"✅ State restored successfully: Epoch {epoch}, Step {step}")
+            print(f"✅ Emergency State restored successfully: Epoch {epoch}, Step {step}")
         else:
-            print("⚠️ Optimizer state missing. Model loaded, starting fresh Adam moments.")
-            epoch = epoch_num
+            print("⚠️ Emergency Optimizer state missing. Model loaded, starting fresh Adam moments.")
+    else:
+        ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]))
+        if ckpts:
+            latest = ckpts[-1]
+            epoch_num = int(latest.stem.split("_")[1])
+            print(f"🔄 Auto-Resuming from {latest.name}...")
+            
+            # Load Model Weights
+            model_state = load_file(str(latest))
+            if hasattr(model, '_orig_mod'):
+                model._orig_mod.load_state_dict(model_state)
+            else:
+                model.load_state_dict(model_state)
+                
+            # Load Optimizer State
+            state_path = CHECKPOINT_DIR / f"epoch_{epoch_num}_state.pt"
+            if state_path.exists():
+                checkpoint = torch.load(str(state_path), map_location="cpu", weights_only=False)
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                scaler.load_state_dict(checkpoint['scaler'])
+                step = checkpoint['step']
+                epoch = checkpoint['epoch']
+                tokens_processed = checkpoint['tokens_processed']
+                print(f"✅ State restored successfully: Epoch {epoch}, Step {step}")
+            else:
+                print("⚠️ Optimizer state missing. Model loaded, starting fresh Adam moments.")
+                epoch = epoch_num
 
     tokens_per_epoch = len(train_data)
     t0 = time.time()
