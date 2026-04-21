@@ -20,8 +20,20 @@ except ImportError:
     print("Error: config.py not found.")
     sys.exit(1)
 
-# UPDATE THIS TO YOUR LATEST EPOCH
-CHECKPOINT_PATH = CHECKPOINT_DIR / "epoch_11.safetensors" 
+def get_target_checkpoint():
+    """Prioritizes CLI args, then latest epoch, then interrupt."""
+    if len(sys.argv) > 1 and Path(sys.argv[1]).exists():
+        return Path(sys.argv[1])
+    
+    checkpoints = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), 
+                        key=lambda p: int(p.stem.split("_")[1]))
+    if checkpoints:
+        return checkpoints[-1]
+    
+    interrupt = CHECKPOINT_DIR / "interrupt.safetensors"
+    return interrupt if interrupt.exists() else None
+
+CHECKPOINT_PATH = get_target_checkpoint()
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
 
 # --- SageGPT Architecture (Must Match Training Engine) ---
@@ -104,7 +116,7 @@ def main():
     sp = spm.SentencePieceProcessor(model_file=str(TOKENIZER_MODEL))
     model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
     
-    if not CHECKPOINT_PATH.exists(): return print(f"❌ Checkpoint missing: {CHECKPOINT_PATH}")
+    if not CHECKPOINT_PATH or not CHECKPOINT_PATH.exists(): return print(f"❌ Checkpoint missing in {CHECKPOINT_DIR}")
     model.load_state_dict(load_file(str(CHECKPOINT_PATH)))
     
     # [Bend Name, Prompt, Keyword to check for "STRAIGHT" status]
