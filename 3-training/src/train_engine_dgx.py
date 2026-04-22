@@ -41,16 +41,16 @@ N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
 
 # INCREASED DROPOUT FOR REGULARIZATION
-DROPOUT = 0.2 
+DROPOUT = 0.3 
 
 # Training Hyperparameters
-WEIGHT_DECAY = 0.3
-LEARNING_RATE_MAX = 4e-4 
+WEIGHT_DECAY = 1.2
+LEARNING_RATE_MAX = 2e-4 
 LEARNING_RATE_MIN = 6e-5
-WARMUP_STEPS = 1000
+WARMUP_STEPS = 2000
 
 # LONG RUN ENDURANCE TUNING
-LR_DECAY_STEPS = 100000 
+LR_DECAY_STEPS = 35000 
 
 # DGX Hardware Config (Gradient Accumulation)
 TOTAL_BATCH_SIZE = 2048 
@@ -167,7 +167,7 @@ class SageGPT(nn.Module):
         
         for layer in self.layers: x = layer(x)
         logits = self.output(self.norm(x))
-        return logits, F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1)) if targets is not None else (logits, None)
+        return logits, F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), label_smoothing=0.1) if targets is not None else (logits, None)
 
 # --- Training Utilities ---
 
@@ -214,6 +214,7 @@ def main():
 
     step, tokens_processed, epoch = 0, 0, 0
     best_v_loss = float('inf')
+    gap_exceeded_steps = 0
     
     # Auto-Resume Logic
     interrupt_ckpt = CHECKPOINT_DIR / "interrupt.safetensors"
@@ -305,14 +306,27 @@ def main():
                 mem = torch.cuda.max_memory_allocated() / 1e9
                 exact_epoch = (step * step_tokens) / tokens_per_epoch
                 print(f"[DGX Spark] [Step {step:5d}] Loss: {accum_loss:.4f} | LR: {lr:.2e} | {tps/1e6:.2f}M tok/s | Mem: {mem:.1f}GB | Epoch: {exact_epoch:.2f}")
+                
+                if tps < 90000:
+                    print(f"⚠️ HARDWARE GUARD: TPS dropped below 0.09M baseline ({tps/1e6:.2f}M tok/s)")
+                if mem > 22.0 or mem < 19.0:
+                    print(f"⚠️ HARDWARE GUARD: VRAM deviation detected ({mem:.1f}GB)")
 
             # CSV Logging & Validation
             if step % 50 == 0:
                 v_loss = estimate_loss(model, val_data, CONTEXT_LENGTH)
-                print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {v_loss - accum_loss:.4f}\n")
+                gap = v_loss - accum_loss
+                print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {gap:.4f}\n")
                 
                 if v_loss < 2.5:
                     print("🚨 PHASE SHIFT DETECTED: SAGE-GPT IS GROKKING SANSKRIT!")
+                
+                if gap > 2.5:
+                    gap_exceeded_steps += 50
+                    if gap_exceeded_steps >= 500:
+                        print("🚨 WARNING: OVERFITTING GAP EXCEEDED 2.5 FOR 500 STEPS!")
+                else:
+                    gap_exceeded_steps = 0
                 
                 if v_loss < best_v_loss:
                     best_v_loss = v_loss

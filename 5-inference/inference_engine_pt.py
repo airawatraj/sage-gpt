@@ -21,7 +21,7 @@ try:
     CONTEXT_LENGTH = config.CONTEXT_LENGTH
     CHECKPOINT_DIR = config.PT_CHECKPOINT_DIR
     TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
-    DROPOUT = 0.2
+    DROPOUT = 0.3
 except ImportError:
     print("❌ Error: config.py not found.")
     sys.exit(1)

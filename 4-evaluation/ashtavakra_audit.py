@@ -16,7 +16,7 @@ try:
     import config
     VOCAB_SIZE, N_LAYER, N_HEAD, N_EMBD, CONTEXT_LENGTH = config.VOCAB_SIZE, config.LAYERS, config.HEADS, config.EMBED_DIM, config.CONTEXT_LENGTH
     CHECKPOINT_DIR, TOKENIZER_MODEL = config.PT_CHECKPOINT_DIR, config.TOKENIZER_DIR / "sutra_tokenizer.model"
-    DROPOUT = 0.2
+    DROPOUT = 0.3
 except ImportError:
     print("Error: config.py not found.")
     sys.exit(1)
