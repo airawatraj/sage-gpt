@@ -21,6 +21,7 @@ try:
     CONTEXT_LENGTH = config.CONTEXT_LENGTH
     CHECKPOINT_DIR = config.PT_CHECKPOINT_DIR
     TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
+    DROPOUT = 0.15
 except ImportError:
     print("❌ Error: config.py not found.")
     sys.exit(1)
@@ -52,6 +53,7 @@ class MultiHeadAttention(nn.Module):
         self.n_head, self.n_embd = n_head, n_embd
         self.wq, self.wk, self.wv, self.wo = [nn.Linear(n_embd, n_embd, bias=False) for _ in range(4)]
         self.register_buffer("freqs_cis", precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH))
+        self.resid_drop = nn.Dropout(DROPOUT)
         self.k_cache = None
         self.v_cache = None
     def forward(self, x, start_pos=0):
@@ -70,8 +72,14 @@ class MultiHeadAttention(nn.Module):
         values = self.v_cache[:, :start_pos+L].transpose(1, 2)
         queries = xq.transpose(1, 2)
         
-        y = F.scaled_dot_product_attention(queries, keys, values, is_causal=(start_pos==0))
-        return self.wo(y.transpose(1, 2).contiguous().view(B, L, D))
+        y = F.scaled_dot_product_attention(
+            queries, 
+            keys, 
+            values, 
+            dropout_p=DROPOUT if self.training else 0.0,
+            is_causal=(start_pos==0)
+        )
+        return self.resid_drop(self.wo(y.transpose(1, 2).contiguous().view(B, L, D)))
 
 class SwiGLU(nn.Module):
     def __init__(self, n_embd):
@@ -81,9 +89,10 @@ class SwiGLU(nn.Module):
         self.w1 = nn.Linear(n_embd, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, n_embd, bias=False)
         self.w3 = nn.Linear(n_embd, hidden_dim, bias=False)
+        self.resid_drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.resid_drop(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 class TransformerBlock(nn.Module):
     def __init__(self, n_embd, n_head):
@@ -98,10 +107,11 @@ class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
         super().__init__()
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
+        self.drop = nn.Dropout(DROPOUT)
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
     def forward(self, x, start_pos=0):
-        x = self.tok_emb(x)
+        x = self.drop(self.tok_emb(x))
         for layer in self.layers: x = layer(x, start_pos=start_pos)
         return self.output(self.norm(x))
 

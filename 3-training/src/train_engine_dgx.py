@@ -1,3 +1,9 @@
+"""
+Sage-GPT-48M-Sutra (NVIDIA DGX Spark)
+Author: 73985767+airawatraj@users.noreply.github.com
+Description: High-performance Transformer SLM trained from scratch on pure Sanskrit.
+"""
+
 import sys
 import os
 import time
@@ -33,14 +39,18 @@ N_LAYER = config.LAYERS
 N_HEAD = config.HEADS
 N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
-DROPOUT = 0.05 
+
+# INCREASED DROPOUT FOR REGULARIZATION
+DROPOUT = 0.15 
 
 # Training Hyperparameters
 WEIGHT_DECAY = 0.1
 LEARNING_RATE_MAX = 6e-4 
 LEARNING_RATE_MIN = 6e-5
 WARMUP_STEPS = 1000
-LR_DECAY_STEPS = 50000 
+
+# REDUCED DECAY STEPS FOR FASTER EPOCH CYCLES
+LR_DECAY_STEPS = 20000 
 
 # DGX Hardware Config (Gradient Accumulation)
 TOTAL_BATCH_SIZE = 2048 
@@ -87,6 +97,9 @@ class MultiHeadAttention(nn.Module):
         self.n_head, self.n_embd = n_head, n_embd
         self.wq, self.wk, self.wv, self.wo = [nn.Linear(n_embd, n_embd, bias=False) for _ in range(4)]
         self.register_buffer("freqs_cis", precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH))
+        
+        # ADDED DROPOUT MODULE
+        self.resid_drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
         B, L, D = x.shape
@@ -94,8 +107,18 @@ class MultiHeadAttention(nn.Module):
         xq, xk = xq.view(B, L, self.n_head, -1), xk.view(B, L, self.n_head, -1)
         xv = xv.view(B, L, self.n_head, -1).transpose(1, 2)
         xq, xk = apply_rotary_emb(xq, xk, self.freqs_cis[:L])
-        y = F.scaled_dot_product_attention(xq.transpose(1, 2), xk.transpose(1, 2), xv, is_causal=True)
-        return self.wo(y.transpose(1, 2).contiguous().view(B, L, D))
+        
+        # ADDED INTERNAL DROPOUT TO SDPA
+        y = F.scaled_dot_product_attention(
+            xq.transpose(1, 2), 
+            xk.transpose(1, 2), 
+            xv, 
+            dropout_p=DROPOUT if self.training else 0.0,
+            is_causal=True
+        )
+        
+        # APPLIED RESIDUAL DROPOUT
+        return self.resid_drop(self.wo(y.transpose(1, 2).contiguous().view(B, L, D)))
 
 class SwiGLU(nn.Module):
     def __init__(self, n_embd):
@@ -105,9 +128,13 @@ class SwiGLU(nn.Module):
         self.w1 = nn.Linear(n_embd, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, n_embd, bias=False)
         self.w3 = nn.Linear(n_embd, hidden_dim, bias=False)
+        
+        # ADDED DROPOUT MODULE
+        self.resid_drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        # APPLIED RESIDUAL DROPOUT
+        return self.resid_drop(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 class TransformerBlock(nn.Module):
     def __init__(self, n_embd, n_head):
@@ -123,13 +150,21 @@ class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
         super().__init__()
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
+        
+        # ADDED EMBEDDING DROPOUT
+        self.drop = nn.Dropout(DROPOUT)
+        
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
         self.apply(self._init_weights)
+        
     def _init_weights(self, m):
         if isinstance(m, (nn.Linear, nn.Embedding)): torch.nn.init.normal_(m.weight, 0, 0.02)
+            
     def forward(self, x, targets=None):
-        x = self.tok_emb(x)
+        # APPLIED DROPOUT TO EMBEDDINGS
+        x = self.drop(self.tok_emb(x))
+        
         for layer in self.layers: x = layer(x)
         logits = self.output(self.norm(x))
         return logits, F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1)) if targets is not None else (logits, None)
@@ -172,10 +207,10 @@ def main():
     decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
     nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
     optim_groups = [
-        {'params': decay_params, 'weight_decay': 0.1},
+        {'params': decay_params, 'weight_decay': WEIGHT_DECAY},
         {'params': nodecay_params, 'weight_decay': 0.0}
     ]
-    optimizer = optim.AdamW(optim_groups, lr=6e-4, betas=(0.9, 0.95))
+    optimizer = optim.AdamW(optim_groups, lr=LEARNING_RATE_MAX, betas=(0.9, 0.95))
 
     step, tokens_processed, epoch = 0, 0, 0
     
