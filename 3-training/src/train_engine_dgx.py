@@ -44,13 +44,13 @@ CONTEXT_LENGTH = config.CONTEXT_LENGTH
 DROPOUT = 0.2 
 
 # Training Hyperparameters
-WEIGHT_DECAY = 0.2
-LEARNING_RATE_MAX = 6e-4 
+WEIGHT_DECAY = 0.3
+LEARNING_RATE_MAX = 4e-4 
 LEARNING_RATE_MIN = 6e-5
 WARMUP_STEPS = 1000
 
-# REDUCED DECAY STEPS FOR FASTER EPOCH CYCLES
-LR_DECAY_STEPS = 20000 
+# LONG RUN ENDURANCE TUNING
+LR_DECAY_STEPS = 100000 
 
 # DGX Hardware Config (Gradient Accumulation)
 TOTAL_BATCH_SIZE = 2048 
@@ -213,6 +213,7 @@ def main():
     optimizer = optim.AdamW(optim_groups, lr=LEARNING_RATE_MAX, betas=(0.9, 0.95))
 
     step, tokens_processed, epoch = 0, 0, 0
+    best_v_loss = float('inf')
     
     # Auto-Resume Logic
     interrupt_ckpt = CHECKPOINT_DIR / "interrupt.safetensors"
@@ -232,6 +233,7 @@ def main():
             step = checkpoint['step']
             epoch = checkpoint['epoch']
             tokens_processed = checkpoint['tokens_processed']
+            best_v_loss = checkpoint.get('best_v_loss', float('inf'))
             print(f"✅ Emergency State restored successfully: Epoch {epoch}, Step {step}")
         else:
             print("⚠️ Emergency Optimizer state missing. Model loaded, starting fresh Adam moments.")
@@ -257,6 +259,7 @@ def main():
                 step = checkpoint['step']
                 epoch = checkpoint['epoch']
                 tokens_processed = checkpoint['tokens_processed']
+                best_v_loss = checkpoint.get('best_v_loss', float('inf'))
                 print(f"✅ State restored successfully: Epoch {epoch}, Step {step}")
             else:
                 print("⚠️ Optimizer state missing. Model loaded, starting fresh Adam moments.")
@@ -304,10 +307,20 @@ def main():
                 print(f"[DGX Spark] [Step {step:5d}] Loss: {accum_loss:.4f} | LR: {lr:.2e} | {tps/1e6:.2f}M tok/s | Mem: {mem:.1f}GB | Epoch: {exact_epoch:.2f}")
 
             # CSV Logging & Validation
-            if step % 200 == 0:
+            if step % 50 == 0:
                 v_loss = estimate_loss(model, val_data, CONTEXT_LENGTH)
                 print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {v_loss - accum_loss:.4f}\n")
                 
+                if v_loss < 2.5:
+                    print("🚨 PHASE SHIFT DETECTED: SAGE-GPT IS GROKKING SANSKRIT!")
+                
+                if v_loss < best_v_loss:
+                    best_v_loss = v_loss
+                    best_path = CHECKPOINT_DIR / "best_grok_model.safetensors"
+                    state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+                    save_file(state_dict, str(best_path))
+                    print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f}): {best_path}")
+
                 header = ["Timestamp", "Step", "Train_Loss", "Val_Loss", "LR", "TPS", "Mem_GB"]
                 file_exists = LOG_FILE.exists()
                 with open(LOG_FILE, "a", newline="") as f:
@@ -336,7 +349,8 @@ def main():
                     'optimizer': optimizer.state_dict(),
                     'step': step,
                     'epoch': epoch,
-                    'tokens_processed': tokens_processed
+                    'tokens_processed': tokens_processed,
+                    'best_v_loss': best_v_loss
                 }, str(CHECKPOINT_DIR / f"epoch_{save_idx}_state.pt"))
                 
                 print(f"💾 Checkpoint Saved: {save_path}")
@@ -353,7 +367,8 @@ def main():
             'optimizer': optimizer.state_dict(),
             'step': step,
             'epoch': epoch,
-            'tokens_processed': tokens_processed
+            'tokens_processed': tokens_processed,
+            'best_v_loss': best_v_loss
         }, str(CHECKPOINT_DIR / "interrupt_state.pt"))
 
 if __name__ == "__main__":
