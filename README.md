@@ -2,17 +2,18 @@
 
 > "To find the Sutra in the Signal."
 
-**Sage-GPT-48M-Sutra (NVIDIA DGX)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~132.7M ultra-pure Sanskrit tokens** (~224M characters). This model marks the transition from a Small Language Model (SLM) to a robust foundation model for Vedic and Classical Sanskrit logic, architected to induce **Grokking** (delayed generalization) through high-density data and high-overfitting training regimes.
+**Sage-GPT-7.5M-Sutra (NVIDIA DGX)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~132.7M ultra-pure Sanskrit tokens** (~224M characters). This model is a highly efficient Small Language Model (SLM) architected to balance parameter count with our 132.7M token corpus to prevent catastrophic overfitting while maximizing generalization and logic derivation.
 
 ## 🚀 DGX Specification Engine
 
 | Feature | Specification | Impact |
 | :--- | :--- | :--- |
-| **Model Size** | **~48M Parameters** | Deeper structural understanding of Paninian grammar. |
-| **Architecture** | 10 Layers, 16 Attention Heads | Massive capacity for hierarchical language rules. |
-| **Dimensions** | 512 Embedding Dim | Richer semantic mapping of philosophical concepts. |
+| **Model Size** | **~7.5M Parameters** | Right-sized for the 132.7M token dataset to prevent overfitting. |
+| **Architecture** | 6 Layers, 8 Attention Heads | Streamlined capacity for hierarchical language rules. |
+| **Dimensions** | 256 Embedding Dim | Efficient semantic mapping of philosophical concepts. |
 | **Context Window** | **1024 Tokens** | Ability to ingest full chapters/shlokas in one window. |
-| **Tokenizer** | SentencePiece Unigram (16k Vocab) | Reduced fragmentation; captures complex *Sandhi*. |
+| **Tokenizer** | SentencePiece Unigram (8k Vocab) | Reduced fragmentation; captures complex *Sandhi*. |
+| **Optimizations** | Weight Tying | Shared input/output embeddings to save parameters and stabilize Softmax. |
 | **Precision** | `bfloat16` Native Mixed | Leverages DGX H100/A100 hardware for stable throughput. |
 
 ---

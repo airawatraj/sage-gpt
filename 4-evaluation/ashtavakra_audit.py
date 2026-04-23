@@ -103,6 +103,7 @@ class SageGPT(nn.Module):
         self.drop = nn.Dropout(DROPOUT)
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
+        self.output.weight = self.tok_emb.weight
     def forward(self, x):
         x = self.drop(self.tok_emb(x))
         for layer in self.layers: x = layer(x)

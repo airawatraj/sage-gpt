@@ -40,20 +40,20 @@ N_HEAD = config.HEADS
 N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
 
-# INCREASED DROPOUT FOR REGULARIZATION
-DROPOUT = 0.3 
+# ADJUSTED DROPOUT FOR REGULARIZATION
+DROPOUT = 0.1 
 
 # Training Hyperparameters
-WEIGHT_DECAY = 1.2
+WEIGHT_DECAY = 0.05
 LEARNING_RATE_MAX = 2e-4 
 LEARNING_RATE_MIN = 6e-5
-WARMUP_STEPS = 2000
+WARMUP_STEPS = 150
 
-# LONG RUN ENDURANCE TUNING
-LR_DECAY_STEPS = 35000 
+# SHORT RUN ENDURANCE TUNING
+LR_DECAY_STEPS = 1500 
 
 # DGX Hardware Config (Gradient Accumulation)
-TOTAL_BATCH_SIZE = 2048 
+TOTAL_BATCH_SIZE = 256 
 MICRO_BATCH_SIZE = 64   
 GRAD_ACCUM_STEPS = TOTAL_BATCH_SIZE // MICRO_BATCH_SIZE
 
@@ -157,6 +157,7 @@ class SageGPT(nn.Module):
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
         self.apply(self._init_weights)
+        self.output.weight = self.tok_emb.weight
         
     def _init_weights(self, m):
         if isinstance(m, (nn.Linear, nn.Embedding)): torch.nn.init.normal_(m.weight, 0, 0.02)
@@ -177,14 +178,22 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * (it - WARMUP_STEPS) / (LR_DECAY_STEPS - WARMUP_STEPS)))
     return LEARNING_RATE_MIN + coeff * (LEARNING_RATE_MAX - LEARNING_RATE_MIN)
 
+def get_batch(data, ctx_len, batch_size):
+    ix = torch.randint(0, len(data) - ctx_len, (batch_size,)).numpy()
+    offsets = np.arange(ctx_len)
+    x_idx = ix[:, None] + offsets
+    y_idx = ix[:, None] + offsets + 1
+    
+    x = torch.from_numpy(data[x_idx].astype(np.int64)).pin_memory().to(DEVICE, non_blocking=True)
+    y = torch.from_numpy(data[y_idx].astype(np.int64)).pin_memory().to(DEVICE, non_blocking=True)
+    return x, y
+
 @torch.no_grad()
 def estimate_loss(model, data, ctx):
     model.eval()
     losses = []
     for _ in range(10): 
-        ix = np.random.randint(0, len(data) - ctx, 16)
-        x = torch.stack([torch.from_numpy(data[i:i+ctx].astype(np.int64)) for i in ix]).to(DEVICE)
-        y = torch.stack([torch.from_numpy(data[i+1:i+ctx+1].astype(np.int64)) for i in ix]).to(DEVICE)
+        x, y = get_batch(data, ctx, 16)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             _, loss = model(x, y)
             losses.append(loss.item())
@@ -278,9 +287,7 @@ def main():
             
             # Gradient Accumulation to hit Global Batch Size
             for _ in range(GRAD_ACCUM_STEPS):
-                ix = np.random.randint(0, len(train_data) - CONTEXT_LENGTH, MICRO_BATCH_SIZE)
-                x = torch.stack([torch.from_numpy(train_data[i:i+CONTEXT_LENGTH].astype(np.int64)) for i in ix]).to(DEVICE)
-                y = torch.stack([torch.from_numpy(train_data[i+1:i+CONTEXT_LENGTH+1].astype(np.int64)) for i in ix]).to(DEVICE)
+                x, y = get_batch(train_data, CONTEXT_LENGTH, MICRO_BATCH_SIZE)
                 
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     _, loss = model(x, y)
@@ -288,6 +295,9 @@ def main():
                 
                 accum_loss += loss.item()
                 loss.backward()
+                
+                # Prevent VRAM Leak: Force deletion of tensors to free graph memory immediately
+                del x, y, loss
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
