@@ -2,7 +2,7 @@
 
 > "To find the Sutra in the Signal."
 
-**Sage-GPT-7.5M-Sutra (NVIDIA DGX)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~132.7M ultra-pure Sanskrit tokens** (~224M characters). This model is a highly efficient Small Language Model (SLM) architected to balance parameter count with our 132.7M token corpus to prevent catastrophic overfitting while maximizing generalization and logic derivation.
+**Sage-GPT-7.5M-Sutra (NVIDIA DGX)** is a Decoder-only Transformer trained from scratch on a specialized corpus of **~140M ultra-pure Sanskrit tokens** (225M characters). This model is a highly efficient Small Language Model (SLM) architected to balance parameter count with our 132.7M token corpus to prevent catastrophic overfitting while maximizing generalization and logic derivation.
 
 ## 🚀 DGX Specification Engine
 
