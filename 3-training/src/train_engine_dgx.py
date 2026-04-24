@@ -232,6 +232,11 @@ def main():
     if interrupt_ckpt.exists():
         print(f"🚑 Rescue Mission: Auto-Resuming from Emergency Save ({interrupt_ckpt.name})...")
         model_state = load_file(str(interrupt_ckpt))
+        
+        # --- SAFETENSORS TIE-WEIGHT RESTORE ---
+        if 'tok_emb.weight' in model_state and 'output.weight' not in model_state:
+            model_state['output.weight'] = model_state['tok_emb.weight']
+            
         if hasattr(model, '_orig_mod'):
             model._orig_mod.load_state_dict(model_state)
         else:
@@ -256,6 +261,11 @@ def main():
             
             # Load Model Weights
             model_state = load_file(str(latest))
+            
+            # --- SAFETENSORS TIE-WEIGHT RESTORE ---
+            if 'tok_emb.weight' in model_state and 'output.weight' not in model_state:
+                model_state['output.weight'] = model_state['tok_emb.weight']
+                
             if hasattr(model, '_orig_mod'):
                 model._orig_mod.load_state_dict(model_state)
             else:
