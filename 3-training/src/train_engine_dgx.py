@@ -342,6 +342,12 @@ def main():
                     best_v_loss = v_loss
                     best_path = CHECKPOINT_DIR / "best_grok_model.safetensors"
                     state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+                    
+                    # --- SAFETENSORS TIE-WEIGHT FIX ---
+                    if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
+                        if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
+                            del state_dict['output.weight']
+                    
                     save_file(state_dict, str(best_path))
                     print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f}): {best_path}")
 
@@ -366,6 +372,12 @@ def main():
                 
                 # Unwrap compiled model for clean saving
                 state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+                
+                # --- SAFETENSORS TIE-WEIGHT FIX ---
+                if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
+                    if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
+                        del state_dict['output.weight']
+                
                 save_file(state_dict, str(save_path))
                 
                 # Save Optimizer and Engine State natively
@@ -386,6 +398,12 @@ def main():
     except KeyboardInterrupt:
         print("\n--- 🛑 SUTRA FOUNDRY HALTED: EMERGENCY SAVE ---")
         state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
+        
+        # --- SAFETENSORS TIE-WEIGHT FIX ---
+        if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
+            if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
+                del state_dict['output.weight']
+                
         save_file(state_dict, str(CHECKPOINT_DIR / "interrupt.safetensors"))
         torch.save({
             'optimizer': optimizer.state_dict(),
