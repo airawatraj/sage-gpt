@@ -44,6 +44,7 @@ uv run python3 2-tokenizer/sutra_tokenizer.py
 Initiates the training loop optimized for the DGX Spark cluster. Features `torch.compile` graph optimization, FlashAttention, and Cosine Learning Rate Decay.
 ```bash
 # Launch on NVIDIA DGX (128GB+ VRAM)
+source .venv/bin/activate
 uv run python3 train_dgx.py
 ```
 
