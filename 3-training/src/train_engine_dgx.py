@@ -58,7 +58,7 @@ LR_DECAY_STEPS = 1500
 MAX_STEPS = None
 
 # Thermal Safety — home DGX Spark operation
-THERMAL_LIMIT_C     = 83   # °C — pause training above this GPU temperature
+THERMAL_LIMIT_C     = 75   # °C — pause training above this GPU temperature
 THERMAL_SLEEP_S     = 30   # seconds to sleep when throttling
 THERMAL_CHECK_EVERY = 100  # check GPU temp every N steps
 
