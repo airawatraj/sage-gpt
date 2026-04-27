@@ -13,7 +13,7 @@ try:
     # Synchronized with train_engine_dgx.py output
     LOG_FILE = config.LOG_DIR / "training" / "training_history_dgx.csv"
     OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "generalisation_gap.png"
-    WARMUP_STEPS = 1000 # Matches your current training engine configuration
+    WARMUP_STEPS = 150 # Matches train_engine_dgx.py
 except ImportError:
     print("❌ Critical: config.py not found. Engine cannot resolve paths.")
     sys.exit(1)

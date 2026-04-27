@@ -6,6 +6,7 @@ Description: High-performance Transformer SLM trained from scratch on pure Sansk
 
 import sys
 import os
+import subprocess
 import time
 import math
 import csv
@@ -40,17 +41,26 @@ N_HEAD = config.HEADS
 N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
 
-# ADJUSTED DROPOUT FOR REGULARIZATION
-DROPOUT = 0.1 
+# Regularization — single source of truth from config.py
+DROPOUT = config.DROPOUT
 
 # Training Hyperparameters
 WEIGHT_DECAY = 0.05
-LEARNING_RATE_MAX = 2e-4 
+LEARNING_RATE_MAX = 2e-4
 LEARNING_RATE_MIN = 6e-5
 WARMUP_STEPS = 150
 
-# SHORT RUN ENDURANCE TUNING
-LR_DECAY_STEPS = 1500 
+# LR schedule: cosine decays MAX→MIN over this many steps.
+# Training continues beyond this at LEARNING_RATE_MIN until MAX_STEPS.
+LR_DECAY_STEPS = 1500
+
+# Full Run Control — None = infinite (Ctrl+C triggers emergency save & clean exit).
+MAX_STEPS = None
+
+# Thermal Safety — home DGX Spark operation
+THERMAL_LIMIT_C     = 83   # °C — pause training above this GPU temperature
+THERMAL_SLEEP_S     = 30   # seconds to sleep when throttling
+THERMAL_CHECK_EVERY = 100  # check GPU temp every N steps
 
 # DGX Hardware Config (Gradient Accumulation)
 TOTAL_BATCH_SIZE = 256 
@@ -192,13 +202,24 @@ def get_batch(data, ctx_len, batch_size):
 def estimate_loss(model, data, ctx):
     model.eval()
     losses = []
-    for _ in range(10): 
-        x, y = get_batch(data, ctx, 16)
+    for _ in range(50):
+        x, y = get_batch(data, ctx, 32)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             _, loss = model(x, y)
             losses.append(loss.item())
     model.train()
     return np.mean(losses)
+
+def get_gpu_temp():
+    """Query GPU temperature via nvidia-smi. Returns 0 if unavailable."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5
+        )
+        return int(result.stdout.strip().split("\n")[0])
+    except Exception:
+        return 0  # Assume safe if nvidia-smi is unavailable
 
 def main():
     print(f"--- 🕉️ SAGE-GPT DGX FOUNDRY: INITIALIZING ---")
@@ -286,6 +307,7 @@ def main():
                 epoch = epoch_num
 
     tokens_per_epoch = len(train_data)
+    mem = 0.0  # Initialised here; refreshed at step%20 and each val check
     t0 = time.time()
 
     try:
@@ -329,11 +351,12 @@ def main():
                 
                 if tps < 90000:
                     print(f"⚠️ HARDWARE GUARD: TPS dropped below 0.09M baseline ({tps/1e6:.2f}M tok/s)")
-                if mem > 22.0 or mem < 19.0:
+                if mem > 14.0 or mem < 7.0:
                     print(f"⚠️ HARDWARE GUARD: VRAM deviation detected ({mem:.1f}GB)")
 
             # CSV Logging & Validation
             if step % 50 == 0:
+                mem = torch.cuda.max_memory_allocated() / 1e9  # Always fresh for CSV
                 v_loss = estimate_loss(model, val_data, CONTEXT_LENGTH)
                 gap = v_loss - accum_loss
                 print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {gap:.4f}\n")
@@ -402,8 +425,17 @@ def main():
                 print(f"💾 Checkpoint Saved: {save_path}")
                 prune_checkpoints(keep=10) # Keep disk lean
             
+            # Thermal Safety — throttle if GPU is running too hot
+            if step % THERMAL_CHECK_EVERY == 0:
+                gpu_temp = get_gpu_temp()
+                if gpu_temp >= THERMAL_LIMIT_C:
+                    print(f"🌡️  THERMAL GUARD: GPU at {gpu_temp}°C — pausing {THERMAL_SLEEP_S}s to cool down...")
+                    time.sleep(THERMAL_SLEEP_S)
+
             step += 1
-            if step > LR_DECAY_STEPS: break
+            if MAX_STEPS is not None and step >= MAX_STEPS:
+                print(f"✅ MAX_STEPS ({MAX_STEPS:,}) reached. Training complete.")
+                break
             
     except KeyboardInterrupt:
         print("\n--- 🛑 SUTRA FOUNDRY HALTED: EMERGENCY SAVE ---")

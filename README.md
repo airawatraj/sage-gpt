@@ -35,7 +35,7 @@ uv run python3 1-data/05-scripts/refine_corpus.py
 ```
 
 ### Step 3: Sutra Tokenization (16k)
-Builds the unigram model using a 16,000-word vocabulary optimized for the ~132.7M token corpus.
+Builds the unigram model using an **8,192-word vocabulary** optimized for the ~139M token corpus.
 ```bash
 uv run python3 2-tokenizer/sutra_tokenizer.py
 ```

@@ -21,7 +21,7 @@ try:
     CONTEXT_LENGTH = config.CONTEXT_LENGTH
     CHECKPOINT_DIR = config.PT_CHECKPOINT_DIR
     TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
-    DROPOUT = 0.3
+    DROPOUT = config.DROPOUT
 except ImportError:
     print("❌ Error: config.py not found.")
     sys.exit(1)
@@ -172,12 +172,17 @@ def main():
     sp = spm.SentencePieceProcessor(model_file=str(TOKENIZER_MODEL))
     model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
     
-    ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]), reverse=True)
-    if not ckpts: return print("❌ No checkpoints found.")
-    
-    # CRITICAL: Load weights BEFORE compiling
-    print(f"📂 Loading Weights: {ckpts[0].name}")
-    model.load_state_dict(load_file(str(ckpts[0])))
+    # Prioritise best_grok_model if available, otherwise fall back to latest epoch
+    best_path = CHECKPOINT_DIR / "best_grok_model.safetensors"
+    if best_path.exists():
+        ckpt_to_load = best_path
+    else:
+        ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]), reverse=True)
+        if not ckpts: return print("❌ No checkpoints found.")
+        ckpt_to_load = ckpts[0]
+
+    print(f"📂 Loading Weights: {ckpt_to_load.name}")
+    model.load_state_dict(load_file(str(ckpt_to_load)))
     
     if hasattr(torch, "compile"):
         print("🚀 Compiling for GB10 Acceleration...")
