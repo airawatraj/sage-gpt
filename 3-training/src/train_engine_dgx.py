@@ -194,8 +194,8 @@ def get_batch(data, ctx_len, batch_size):
     x_idx = ix[:, None] + offsets
     y_idx = ix[:, None] + offsets + 1
     
-    x = torch.from_numpy(data[x_idx].astype(np.int64)).pin_memory().to(DEVICE, non_blocking=True)
-    y = torch.from_numpy(data[y_idx].astype(np.int64)).pin_memory().to(DEVICE, non_blocking=True)
+    x = torch.from_numpy(data[x_idx].astype(np.int64)).to(DEVICE)
+    y = torch.from_numpy(data[y_idx].astype(np.int64)).to(DEVICE)
     return x, y
 
 @torch.no_grad()
