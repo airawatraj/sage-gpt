@@ -77,7 +77,15 @@ def main():
     
     header = ["Timestamp", "Checkpoint", "Avg_Attn_Norm", "Avg_MLP_Norm", "Peak_Value"]
     file_exists = log_file.exists()
-    
+
+    # Deduplication guard: skip if this checkpoint was already logged.
+    if file_exists:
+        with open(log_file, mode='r', newline='') as f:
+            logged = [row[1] for row in csv.reader(f) if row]
+        if checkpoint_path.name in logged:
+            print(f"ℹ️  Checkpoint '{checkpoint_path.name}' already logged — skipping duplicate row.")
+            return
+
     with open(log_file, mode='a', newline='') as f:
         writer = csv.writer(f)
         if not file_exists:

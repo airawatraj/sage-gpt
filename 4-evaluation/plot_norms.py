@@ -29,7 +29,13 @@ def plot_norms():
 
     # 2. Sort by Epoch so the lines flow correctly
     df['Epoch'] = df['Checkpoint'].str.extract(r'(\d+)').astype(float)
+    # Deduplicate: keep the last logged entry per checkpoint (handles legacy duplicate rows)
+    df = df.drop_duplicates(subset='Checkpoint', keep='last')
     df = df.sort_values(by='Epoch').reset_index(drop=True)
+
+    if len(df) < 2:
+        print(f"⚠️  Only {len(df)} unique epoch(s) in the log — run inspect_norms_pt.py on more checkpoints to build history.")
+        print(f"   Logged epochs: {df['Epoch'].tolist()}")
 
     # 3. Visualization Setup
     plt.style.use('dark_background')

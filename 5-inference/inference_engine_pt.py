@@ -182,7 +182,13 @@ def main():
         ckpt_to_load = ckpts[0]
 
     print(f"📂 Loading Weights: {ckpt_to_load.name}")
-    model.load_state_dict(load_file(str(ckpt_to_load)))
+    missing, unexpected = model.load_state_dict(load_file(str(ckpt_to_load)), strict=False)
+    # Weight-tying: output.weight shares tok_emb.weight and is not saved separately in safetensors.
+    real_missing = set(missing) - {"output.weight"}
+    if real_missing:
+        raise RuntimeError(f"❌ Unexpected missing keys in checkpoint: {real_missing}")
+    if unexpected:
+        print(f"⚠️  Unexpected extra keys (ignored): {set(unexpected)}")
     
     if hasattr(torch, "compile"):
         print("🚀 Compiling for GB10 Acceleration...")
