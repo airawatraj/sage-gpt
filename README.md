@@ -71,6 +71,7 @@ Sage-GPT includes a suite of mechanistic interpretability tools to monitor the *
     ```bash
     uv run python3 4-evaluation/generalisation_gap_monitor.py
     ```
+    ![Sage Training on DGX Spark](assets/generalisation_gap.png)
 2.  **Mechanistic Weight Inspection**: Tracks L2 norms of Attention/MLP layers to observe weight consolidation during grokking.
     ```bash
     uv run python3 4-evaluation/inspect_norms.py
