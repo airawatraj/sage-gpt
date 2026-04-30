@@ -59,6 +59,8 @@ Trains a SentencePiece unigram model with an **8,192-word vocabulary** on the ~1
 uv run python3 2-tokenizer/sutra_tokenizer.py
 ```
 
+![Tokenization](assets/sutra-tokenizer.png)
+
 ### Step 4 — DGX Training
 
 `train_dgx.py` is the entry point — it launches `3-training/src/train_engine_dgx.py`, which runs the full training loop with `torch.compile` graph optimisation, fused SDPA (FlashAttention), cosine LR decay, gradient accumulation, thermal throttling, and auto-resume from any checkpoint.
