@@ -43,6 +43,8 @@ The **Visuddhi V5** engine transforms ~14GB of raw manuscript sources into a pur
 uv run python3 1-data/05-scripts/visuddhiv5.py
 ```
 
+![Visuddhi Run](assets/visuddhi-run.png)
+
 ### Step 2 — Refine Corpus (Linguistic Scalpel)
 
 Precision filtering for medieval vernacular (Awadhi/Brij) markers. Sentences ending with `हि` or `उ` patterns are flagged and removed to ensure Sutra-grade purity.
@@ -50,6 +52,8 @@ Precision filtering for medieval vernacular (Awadhi/Brij) markers. Sentences end
 ```bash
 uv run python3 1-data/05-scripts/refine_corpus.py
 ```
+
+![Refine Corpus](assets/refine-corpus.png)
 
 ### Step 3 — Sutra Tokenization
 
