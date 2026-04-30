@@ -100,7 +100,7 @@ safe weight-tied loading) — no duplication across tools.
    ```bash
    uv run python3 4-evaluation/ashtavakra_audit.py
    ```
-
+![8 Bends test](assets/ashtavakra-audit.png)
 > **Tip:** Run the full pipeline (probe → norms → gap → audit → inference) with a single command:
 > ```bash
 > bash 4-evaluation/evaluate.sh
