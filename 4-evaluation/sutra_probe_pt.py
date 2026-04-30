@@ -69,7 +69,11 @@ def main():
         inf_found   = False
         total_params = 0
 
-        for tensor in weights.values():
+        for key, tensor in weights.items():
+            if tensor.is_complex():
+                # freqs_cis (RoPE buffer) is complex64 — a precomputed constant,
+                # not a trainable weight. Skip to avoid spurious UserWarning.
+                continue
             t = tensor.float()
             total_params += t.numel()
             if torch.isnan(t).any(): nan_found = True
