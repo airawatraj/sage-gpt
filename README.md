@@ -47,6 +47,7 @@ Initiates the training loop optimized for the DGX Spark cluster. Features `torch
 source .venv/bin/activate
 uv run python3 train_dgx.py
 ```
+![Sage Training on DGX Spark](assets/sage-gpt-trainnig-DGX.png)
 
 ---
 
