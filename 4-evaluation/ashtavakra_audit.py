@@ -129,7 +129,15 @@ def main():
     model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
     
     if not CHECKPOINT_PATH or not CHECKPOINT_PATH.exists(): return print(f"❌ Checkpoint missing in {CHECKPOINT_DIR}")
-    model.load_state_dict(load_file(str(CHECKPOINT_PATH)))
+    state_dict = load_file(str(CHECKPOINT_PATH))
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    # Weight-tying: output.weight shares tok_emb.weight and is not saved separately.
+    expected_missing = {"output.weight"}
+    real_missing = set(missing) - expected_missing
+    if real_missing:
+        print(f"⚠️  Unexpected missing keys: {real_missing}")
+    if unexpected:
+        print(f"⚠️  Unexpected extra keys: {set(unexpected)}")
     
     # [Bend Name, Prompt, Keyword to check for "STRAIGHT" status]
     bends = [
