@@ -89,7 +89,7 @@ safe weight-tied loading) — no duplication across tools.
    uv run python3 4-evaluation/build_norm_history.py          # full scan + plot
    uv run python3 4-evaluation/build_norm_history.py --plot-only  # re-plot existing CSV
    ```
-
+   ![Normanisation Plot](assets/norm_history.png)
 3. **Generalisation Gap Monitor** — plots Train vs. Val loss divergence and detects grokking phase shifts.
    ```bash
    uv run python3 4-evaluation/generalisation_gap_monitor.py
