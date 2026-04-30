@@ -81,6 +81,7 @@ safe weight-tied loading) — no duplication across tools.
    ```bash
    uv run python3 4-evaluation/sutra_probe_pt.py
    ```
+   ![Sutra Probe](assets/sutra-probe.png)
 
 2. **Norm History Builder** — scans all `epoch_*.safetensors`, accumulates L2 norms to CSV,
    and renders `norm_history.png`. Replaces the old two-step `inspect_norms + plot_norms` pipeline.
