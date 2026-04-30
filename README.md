@@ -66,23 +66,45 @@ Our "Zero-Poison" policy ensures the model trains only on high-fidelity Sanskrit
 ## 📊 Evaluation & Mechanistic Suite
 
 Sage-GPT includes a suite of mechanistic interpretability tools to monitor the **Grokking Phase Shift**.
+All scripts share a common foundation via **`eval_utils.py`** (model architecture, checkpoint resolution,
+safe weight-tied loading) — no duplication across tools.
 
-1.  **Generalization Gap Monitor**: Tracks Train vs. Val Loss divergence in real-time.
-    ```bash
-    uv run python3 4-evaluation/generalisation_gap_monitor.py
-    ```
-    ![Sage Training on DGX Spark](assets/generalisation_gap.png)
-2.  **Mechanistic Weight Inspection**: Tracks L2 norms of Attention/MLP layers to observe weight consolidation during grokking.
-    ```bash
-    uv run python3 4-evaluation/inspect_norms.py
-    uv run python3 4-evaluation/plot_norms.py
-    ```
-3.  **The Ashtavakra Audit**: A specialized logical consistency test for the model's Sanskrit generative output.
-    ```bash
-    uv run python3 4-evaluation/ashtavakra_audit.py
-    ```
+### Shared Foundation
 
-> **Tip:** Run the full evaluation suite with: `./4-evaluation/evaluate.sh`
+| Module | Role |
+| :--- | :--- |
+| `eval_utils.py` | SageGPT eval model, `get_target_checkpoint()`, `load_model_from_checkpoint()` |
+
+### Evaluation Tools
+
+1. **Checkpoint Probe** — architecture shape + NaN/Inf health check before anything else.
+   ```bash
+   uv run python3 4-evaluation/sutra_probe_pt.py
+   ```
+
+2. **Norm History Builder** — scans all `epoch_*.safetensors`, accumulates L2 norms to CSV,
+   and renders `norm_history.png`. Replaces the old two-step `inspect_norms + plot_norms` pipeline.
+   No pandas required.
+   ```bash
+   uv run python3 4-evaluation/build_norm_history.py          # full scan + plot
+   uv run python3 4-evaluation/build_norm_history.py --plot-only  # re-plot existing CSV
+   ```
+
+3. **Generalisation Gap Monitor** — plots Train vs. Val loss divergence and detects grokking phase shifts.
+   ```bash
+   uv run python3 4-evaluation/generalisation_gap_monitor.py
+   ```
+   ![Generalisation Gap](assets/generalisation_gap.png)
+
+4. **The Ashtavakra Audit** — 8-bend Sanskrit generative consistency test (V2.3).
+   ```bash
+   uv run python3 4-evaluation/ashtavakra_audit.py
+   ```
+
+> **Tip:** Run the full pipeline (probe → norms → gap → audit → inference) with a single command:
+> ```bash
+> bash 4-evaluation/evaluate.sh
+> ```
 
 ---
 
