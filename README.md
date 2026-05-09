@@ -1,10 +1,10 @@
-# 🕉️ Sovereign Ancient General Intelligence (SAGE-GPT)
+# 🕉️ SageGPT — Sanskrit Small Language Model (SLM)
 
 > *"To find the Sutra in the Signal."*
 
 **Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **entirely from scratch** on a specialised corpus of **~140M ultra-pure Sanskrit tokens** (225M characters). It is not a fine-tuned version of an existing LLM — it is built ground-up, specifically for one language and one domain: classical and Vedic Sanskrit literature.
 
-Sanskrit is structurally unlike modern languages. It has complex *sandhi* (phonological fusion rules), rich case inflection across 8 cases, strict metrical structure in verse, and a philosophical vocabulary that does not map into English-centric model spaces. General-purpose LLMs handle Sanskrit poorly. Sage-GPT is designed to *internalise Sanskrit grammar at a mechanistic level* — not merely memorise text, but generalise linguistic rules the way a human scholar would.
+Sanskrit is structurally unlike modern languages. It has complex *sandhi* (phonological fusion rules), rich case inflection across 8 cases, strict metrical structure in verse, and a philosophical vocabulary that does not map into English-centric model spaces. General-purpose LLMs handle Sanskrit poorly. 
 
 ---
 
