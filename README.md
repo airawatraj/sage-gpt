@@ -4,6 +4,13 @@
 
 **Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **entirely from scratch** on a specialised corpus of **~140M ultra-pure Sanskrit tokens** (225M characters). It is not a fine-tuned version of an existing LLM — it is built ground-up, specifically for one language and one domain: classical and Vedic Sanskrit literature.
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
+![Model](https://img.shields.io/badge/model-7.5M%20SLM-purple)
+![Training](https://img.shields.io/badge/training-from%20scratch-orange)
+![Dataset](https://img.shields.io/badge/data-140M%20Sanskrit%20tokens-blue)
+![Hardware](https://img.shields.io/badge/hardware-NVIDIA%20DGX%20Spark-brightgreen?logo=nvidia&logoColor=white)
+![Context](https://img.shields.io/badge/context-1024-lightgrey)
+
 Sanskrit is structurally unlike modern languages. It has complex *sandhi* (phonological fusion rules), rich case inflection across 8 cases, strict metrical structure in verse, and a philosophical vocabulary that does not map into English-centric model spaces. General-purpose LLMs handle Sanskrit poorly. 
 
 ---
