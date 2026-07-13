@@ -354,24 +354,22 @@ def main():
                 if mem > 14.0 or mem < 7.0:
                     print(f"⚠️ HARDWARE GUARD: VRAM deviation detected ({mem:.1f}GB)")
 
-            # CSV Logging & Validation
+            # --- CSV Logging & Validation ---
             if step % 50 == 0:
-                mem = torch.cuda.max_memory_allocated() / 1e9  # Always fresh for CSV
+                mem = torch.cuda.max_memory_allocated() / 1e9  # Fresh VRAM measurement
                 v_loss = estimate_loss(model, val_data, CONTEXT_LENGTH)
+                
+                # Calculate the true gap accounting for training accumulation style
                 gap = v_loss - accum_loss
-                print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {gap:.4f}\n")
+                print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {gap:.4f}")
                 
-                if v_loss < 2.5:
-                    print("🚨 PHASE SHIFT DETECTED: SAGE-GPT IS GROKKING SANSKRIT!")
-                
-                if gap > 2.5:
-                    gap_exceeded_steps += 50
-                    if gap_exceeded_steps >= 500:
-                        print("🚨 WARNING: OVERFITTING GAP EXCEEDED 2.5 FOR 500 STEPS!")
-                else:
-                    gap_exceeded_steps = 0
-                
+                # A true grokking detector: monitors structural validation drops 
+                # relative to the historical best, rather than a hardcoded static limit
                 if v_loss < best_v_loss:
+                    # Check if it is a major validation breakthrough (potential grokking signature)
+                    if best_v_loss != float('inf') and (best_v_loss - v_loss) > 0.15:
+                        print("🚨 PHASE SHIFT DETECTED: STRUCTURAL VALIDATION ACCELERATION!")
+                        
                     best_v_loss = v_loss
                     best_path = CHECKPOINT_DIR / "best_grok_model.safetensors"
                     state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
@@ -382,28 +380,41 @@ def main():
                             del state_dict['output.weight']
                     
                     save_file(state_dict, str(best_path))
-                    print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f}): {best_path}")
+                    print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f}): {best_path}\n")
 
+                # Track divergence warning (overfitting)
+                if gap > 2.5:
+                    gap_exceeded_steps += 50
+                    if gap_exceeded_steps >= 500:
+                        print("🚨 WARNING: OVERFITTING GAP EXCEEDED 2.5 FOR 500 STEPS!")
+                else:
+                    gap_exceeded_steps = 0
+
+                # Write to historical logs
                 header = ["Timestamp", "Step", "Train_Loss", "Val_Loss", "LR", "TPS", "Mem_GB"]
                 file_exists = LOG_FILE.exists()
                 with open(LOG_FILE, "a", newline="") as f:
                     writer = csv.writer(f)
-                    if not file_exists: writer.writerow(header)
+                    if not file_exists: 
+                        writer.writerow(header)
                     writer.writerow([datetime.now().isoformat(), step, f"{accum_loss:.4f}", f"{v_loss:.4f}", f"{lr:.2e}", f"{tps:.0f}", f"{mem:.2f}"])
 
-            # Checkpointing & Auto-Pruning
+            # --- Checkpointing & Auto-Pruning ---
             is_epoch_boundary = False
             while tokens_processed >= tokens_per_epoch:
                 epoch += 1
                 tokens_processed -= tokens_per_epoch
                 is_epoch_boundary = True
 
+            # Standardized Save Logic: use true metrics for filenames
             if is_epoch_boundary or (step > 0 and step % 500 == 0):
-                existing_ckpts = [int(p.stem.split("_")[1]) for p in CHECKPOINT_DIR.glob("epoch_*.safetensors") if len(p.stem.split("_")) > 1 and p.stem.split("_")[1].isdigit()]
-                save_idx = max(existing_ckpts) + 1 if existing_ckpts else 1
-                save_path = CHECKPOINT_DIR / f"epoch_{save_idx}.safetensors"
+                if is_epoch_boundary:
+                    save_path = CHECKPOINT_DIR / f"epoch_{epoch}.safetensors"
+                    state_path = CHECKPOINT_DIR / f"epoch_{epoch}_state.pt"
+                else:
+                    save_path = CHECKPOINT_DIR / f"step_{step}.safetensors"
+                    state_path = CHECKPOINT_DIR / f"step_{step}_state.pt"
                 
-                # Unwrap compiled model for clean saving
                 state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
                 
                 # --- SAFETENSORS TIE-WEIGHT FIX ---
@@ -413,17 +424,16 @@ def main():
                 
                 save_file(state_dict, str(save_path))
                 
-                # Save Optimizer and Engine State natively
                 torch.save({
                     'optimizer': optimizer.state_dict(),
                     'step': step,
                     'epoch': epoch,
                     'tokens_processed': tokens_processed,
                     'best_v_loss': best_v_loss
-                }, str(CHECKPOINT_DIR / f"epoch_{save_idx}_state.pt"))
+                }, str(state_path))
                 
                 print(f"💾 Checkpoint Saved: {save_path}")
-                prune_checkpoints(keep=10) # Keep disk lean
+                prune_checkpoints(keep=10)
             
             # Thermal Safety — throttle if GPU is running too hot
             if step % THERMAL_CHECK_EVERY == 0:
