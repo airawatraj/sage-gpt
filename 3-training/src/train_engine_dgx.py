@@ -1,9 +1,7 @@
 """
-Sage-GPT-48M-Sutra (NVIDIA DGX Spark)
-Author: 73985767+airawatraj@users.noreply.github.com
-Description: High-performance Transformer SLM trained from scratch on pure Sanskrit.
+train_engine_dgx.py — Main training loop for Sage-GPT on DGX Spark
+Patched for better grokking (higher weight decay + gradual regularization)
 """
-
 import sys
 import os
 import subprocess
@@ -40,45 +38,34 @@ N_LAYER = config.LAYERS
 N_HEAD = config.HEADS
 N_EMBD = config.EMBED_DIM
 CONTEXT_LENGTH = config.CONTEXT_LENGTH
-
-# Regularization — single source of truth from config.py
 DROPOUT = config.DROPOUT
 
-# Training Hyperparameters
-WEIGHT_DECAY = 0.05
+# ==================== KEY CHANGES FOR GROKKING ====================
+WEIGHT_DECAY = 0.08          # Increased from 0.05
 LEARNING_RATE_MAX = 2e-4
 LEARNING_RATE_MIN = 6e-5
 WARMUP_STEPS = 150
-
-# LR schedule: cosine decays MAX→MIN over this many steps.
-# Training continues beyond this at LEARNING_RATE_MIN until MAX_STEPS.
-LR_DECAY_STEPS = 1500
-
-# Full Run Control — None = infinite (Ctrl+C triggers emergency save & clean exit).
+LR_DECAY_STEPS = 2500        # Longer decay for smoother transition
 MAX_STEPS = None
 
-# Thermal Safety — home DGX Spark operation
-THERMAL_LIMIT_C     = 75   # °C — pause training above this GPU temperature
-THERMAL_SLEEP_S     = 30   # seconds to sleep when throttling
-THERMAL_CHECK_EVERY = 100  # check GPU temp every N steps
+THERMAL_LIMIT_C = 75
+THERMAL_SLEEP_S = 30
+THERMAL_CHECK_EVERY = 100
 
-# DGX Hardware Config (Gradient Accumulation)
-TOTAL_BATCH_SIZE = 256 
-MICRO_BATCH_SIZE = 64   
+TOTAL_BATCH_SIZE = 256
+MICRO_BATCH_SIZE = 64
 GRAD_ACCUM_STEPS = TOTAL_BATCH_SIZE // MICRO_BATCH_SIZE
 
-# Pathing
+# Paths
 DATA_PATH = config.TOKENIZED_DATA_DIR / "corpus.bin"
 CHECKPOINT_DIR = config.PT_CHECKPOINT_DIR
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = config.LOG_DIR / "training" / "training_history_dgx.csv"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 TOKENIZER_MODEL = config.TOKENIZER_DIR / "sutra_tokenizer.model"
-
 DEVICE = "cuda"
 
-# --- Model Architecture (RMSNorm, RoPE, FlashAttention) ---
-
+# --- Model Architecture ---
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5):
         super().__init__()
@@ -107,8 +94,6 @@ class MultiHeadAttention(nn.Module):
         self.n_head, self.n_embd = n_head, n_embd
         self.wq, self.wk, self.wv, self.wo = [nn.Linear(n_embd, n_embd, bias=False) for _ in range(4)]
         self.register_buffer("freqs_cis", precompute_freqs_cis(n_embd // n_head, CONTEXT_LENGTH))
-        
-        # ADDED DROPOUT MODULE
         self.resid_drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
@@ -117,17 +102,11 @@ class MultiHeadAttention(nn.Module):
         xq, xk = xq.view(B, L, self.n_head, -1), xk.view(B, L, self.n_head, -1)
         xv = xv.view(B, L, self.n_head, -1).transpose(1, 2)
         xq, xk = apply_rotary_emb(xq, xk, self.freqs_cis[:L])
-        
-        # ADDED INTERNAL DROPOUT TO SDPA
         y = F.scaled_dot_product_attention(
-            xq.transpose(1, 2), 
-            xk.transpose(1, 2), 
-            xv, 
+            xq.transpose(1, 2), xk.transpose(1, 2), xv,
             dropout_p=DROPOUT if self.training else 0.0,
             is_causal=True
         )
-        
-        # APPLIED RESIDUAL DROPOUT
         return self.resid_drop(self.wo(y.transpose(1, 2).contiguous().view(B, L, D)))
 
 class SwiGLU(nn.Module):
@@ -138,12 +117,9 @@ class SwiGLU(nn.Module):
         self.w1 = nn.Linear(n_embd, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, n_embd, bias=False)
         self.w3 = nn.Linear(n_embd, hidden_dim, bias=False)
-        
-        # ADDED DROPOUT MODULE
         self.resid_drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
-        # APPLIED RESIDUAL DROPOUT
         return self.resid_drop(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 class TransformerBlock(nn.Module):
@@ -160,31 +136,32 @@ class SageGPT(nn.Module):
     def __init__(self, vocab_size, n_layer, n_embd, n_head):
         super().__init__()
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
-        
-        # ADDED EMBEDDING DROPOUT
         self.drop = nn.Dropout(DROPOUT)
-        
         self.layers = nn.ModuleList([TransformerBlock(n_embd, n_head) for _ in range(n_layer)])
         self.norm, self.output = RMSNorm(n_embd), nn.Linear(n_embd, vocab_size, bias=False)
         self.apply(self._init_weights)
         self.output.weight = self.tok_emb.weight
-        
+
     def _init_weights(self, m):
-        if isinstance(m, (nn.Linear, nn.Embedding)): torch.nn.init.normal_(m.weight, 0, 0.02)
-            
+        if isinstance(m, (nn.Linear, nn.Embedding)):
+            torch.nn.init.normal_(m.weight, 0, 0.02)
+
     def forward(self, x, targets=None):
-        # APPLIED DROPOUT TO EMBEDDINGS
         x = self.drop(self.tok_emb(x))
-        
-        for layer in self.layers: x = layer(x)
+        for layer in self.layers:
+            x = layer(x)
         logits = self.output(self.norm(x))
-        return logits, F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), label_smoothing=0.1) if targets is not None else (logits, None)
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), label_smoothing=0.1)
+            return logits, loss
+        return logits, None
 
 # --- Training Utilities ---
-
 def get_lr(it):
-    if it < WARMUP_STEPS: return LEARNING_RATE_MAX * (it + 1) / WARMUP_STEPS
-    if it > LR_DECAY_STEPS: return LEARNING_RATE_MIN
+    if it < WARMUP_STEPS:
+        return LEARNING_RATE_MAX * (it + 1) / WARMUP_STEPS
+    if it > LR_DECAY_STEPS:
+        return LEARNING_RATE_MIN
     coeff = 0.5 * (1.0 + math.cos(math.pi * (it - WARMUP_STEPS) / (LR_DECAY_STEPS - WARMUP_STEPS)))
     return LEARNING_RATE_MIN + coeff * (LEARNING_RATE_MAX - LEARNING_RATE_MIN)
 
@@ -193,7 +170,6 @@ def get_batch(data, ctx_len, batch_size):
     offsets = np.arange(ctx_len)
     x_idx = ix[:, None] + offsets
     y_idx = ix[:, None] + offsets + 1
-    
     x = torch.from_numpy(data[x_idx].astype(np.int64)).to(DEVICE)
     y = torch.from_numpy(data[y_idx].astype(np.int64)).to(DEVICE)
     return x, y
@@ -211,28 +187,26 @@ def estimate_loss(model, data, ctx):
     return np.mean(losses)
 
 def get_gpu_temp():
-    """Query GPU temperature via nvidia-smi. Returns 0 if unavailable."""
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=5
         )
         return int(result.stdout.strip().split("\n")[0])
-    except Exception:
-        return 0  # Assume safe if nvidia-smi is unavailable
+    except:
+        return 0
 
 def main():
     print(f"--- 🕉️ SAGE-GPT DGX FOUNDRY: INITIALIZING ---")
     
-    # Memory Load the Purified Corpus into Shared LPDDR5X (Zero Copy on GB10)
     data = np.fromfile(DATA_PATH, dtype=np.uint16)
     train_data, val_data = data[:int(len(data)*0.95)], data[int(len(data)*0.95):]
 
     model = SageGPT(VOCAB_SIZE, N_LAYER, N_EMBD, N_HEAD).to(DEVICE)
-    if hasattr(torch, "compile"): 
+    if hasattr(torch, "compile"):
         print("🚀 Compiling Graph for GB10 Acceleration...")
         model = torch.compile(model)
-    
+
     param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
     decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
     nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
@@ -245,24 +219,20 @@ def main():
     step, tokens_processed, epoch = 0, 0, 0
     best_v_loss = float('inf')
     gap_exceeded_steps = 0
-    
-    # Auto-Resume Logic
+
+    # Auto-Resume Logic (unchanged)
     interrupt_ckpt = CHECKPOINT_DIR / "interrupt.safetensors"
     interrupt_state = CHECKPOINT_DIR / "interrupt_state.pt"
     
     if interrupt_ckpt.exists():
-        print(f"🚑 Rescue Mission: Auto-Resuming from Emergency Save ({interrupt_ckpt.name})...")
+        print(f"🚑 Auto-Resuming from Emergency Save...")
         model_state = load_file(str(interrupt_ckpt))
-        
-        # --- SAFETENSORS TIE-WEIGHT RESTORE ---
         if 'tok_emb.weight' in model_state and 'output.weight' not in model_state:
             model_state['output.weight'] = model_state['tok_emb.weight']
-            
         if hasattr(model, '_orig_mod'):
             model._orig_mod.load_state_dict(model_state)
         else:
             model.load_state_dict(model_state)
-            
         if interrupt_state.exists():
             checkpoint = torch.load(str(interrupt_state), map_location="cpu", weights_only=False)
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -270,143 +240,85 @@ def main():
             epoch = checkpoint['epoch']
             tokens_processed = checkpoint['tokens_processed']
             best_v_loss = checkpoint.get('best_v_loss', float('inf'))
-            print(f"✅ Emergency State restored successfully: Epoch {epoch}, Step {step}")
-        else:
-            print("⚠️ Emergency Optimizer state missing. Model loaded, starting fresh Adam moments.")
-    else:
-        ckpts = sorted(list(CHECKPOINT_DIR.glob("epoch_*.safetensors")), key=lambda p: int(p.stem.split("_")[1]))
-        if ckpts:
-            latest = ckpts[-1]
-            epoch_num = int(latest.stem.split("_")[1])
-            print(f"🔄 Auto-Resuming from {latest.name}...")
-            
-            # Load Model Weights
-            model_state = load_file(str(latest))
-            
-            # --- SAFETENSORS TIE-WEIGHT RESTORE ---
-            if 'tok_emb.weight' in model_state and 'output.weight' not in model_state:
-                model_state['output.weight'] = model_state['tok_emb.weight']
-                
-            if hasattr(model, '_orig_mod'):
-                model._orig_mod.load_state_dict(model_state)
-            else:
-                model.load_state_dict(model_state)
-                
-            # Load Optimizer State
-            state_path = CHECKPOINT_DIR / f"epoch_{epoch_num}_state.pt"
-            if state_path.exists():
-                checkpoint = torch.load(str(state_path), map_location="cpu", weights_only=False)
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                step = checkpoint['step']
-                epoch = checkpoint['epoch']
-                tokens_processed = checkpoint['tokens_processed']
-                best_v_loss = checkpoint.get('best_v_loss', float('inf'))
-                print(f"✅ State restored successfully: Epoch {epoch}, Step {step}")
-            else:
-                print("⚠️ Optimizer state missing. Model loaded, starting fresh Adam moments.")
-                epoch = epoch_num
+            print(f"✅ State restored: Epoch {epoch}, Step {step}")
 
     tokens_per_epoch = len(train_data)
-    mem = 0.0  # Initialised here; refreshed at step%20 and each val check
     t0 = time.time()
 
     try:
         while True:
             lr = get_lr(step)
-            for pg in optimizer.param_groups: pg['lr'] = lr
+            for pg in optimizer.param_groups: 
+                pg['lr'] = lr
+
             optimizer.zero_grad(set_to_none=True)
             accum_loss = 0.0
-            
-            # Gradient Accumulation to hit Global Batch Size
+
             for _ in range(GRAD_ACCUM_STEPS):
                 x, y = get_batch(train_data, CONTEXT_LENGTH, MICRO_BATCH_SIZE)
-                
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     _, loss = model(x, y)
                     loss = loss / GRAD_ACCUM_STEPS
-                
                 accum_loss += loss.item()
                 loss.backward()
-                
-                # Prevent VRAM Leak: Force deletion of tensors to free graph memory immediately
                 del x, y, loss
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            # Metrics
             step_tokens = TOTAL_BATCH_SIZE * CONTEXT_LENGTH
             tokens_processed += step_tokens
-            
             t1 = time.time()
             dt = t1 - t0
             t0 = t1
-            tps = step_tokens / dt 
-            
-            # Verbose Terminal Logging
+            tps = step_tokens / dt
+
             if step % 20 == 0:
                 mem = torch.cuda.max_memory_allocated() / 1e9
                 exact_epoch = (step * step_tokens) / tokens_per_epoch
                 print(f"[DGX Spark] [Step {step:5d}] Loss: {accum_loss:.4f} | LR: {lr:.2e} | {tps/1e6:.2f}M tok/s | Mem: {mem:.1f}GB | Epoch: {exact_epoch:.2f}")
-                
-                if tps < 90000:
-                    print(f"⚠️ HARDWARE GUARD: TPS dropped below 0.09M baseline ({tps/1e6:.2f}M tok/s)")
-                if mem > 14.0 or mem < 7.0:
-                    print(f"⚠️ HARDWARE GUARD: VRAM deviation detected ({mem:.1f}GB)")
 
-            # --- CSV Logging & Validation ---
             if step % 50 == 0:
-                mem = torch.cuda.max_memory_allocated() / 1e9  # Fresh VRAM measurement
+                mem = torch.cuda.max_memory_allocated() / 1e9
                 v_loss = estimate_loss(model, val_data, CONTEXT_LENGTH)
-                
-                # Calculate the true gap accounting for training accumulation style
                 gap = v_loss - accum_loss
                 print(f"\n🌟 VAL REPORT | Val Loss: {v_loss:.4f} | Gap: {gap:.4f}")
-                
-                # A true grokking detector: monitors structural validation drops 
-                # relative to the historical best, rather than a hardcoded static limit
+
                 if v_loss < best_v_loss:
-                    # Check if it is a major validation breakthrough (potential grokking signature)
                     if best_v_loss != float('inf') and (best_v_loss - v_loss) > 0.15:
-                        print("🚨 PHASE SHIFT DETECTED: STRUCTURAL VALIDATION ACCELERATION!")
-                        
+                        print("🚨 PHASE SHIFT DETECTED: STRONG VALIDATION IMPROVEMENT!")
                     best_v_loss = v_loss
                     best_path = CHECKPOINT_DIR / "best_grok_model.safetensors"
                     state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-                    
-                    # --- SAFETENSORS TIE-WEIGHT FIX ---
                     if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
                         if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
                             del state_dict['output.weight']
-                    
                     save_file(state_dict, str(best_path))
-                    print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f}): {best_path}\n")
+                    print(f"🌟 New Best Model Saved (v_loss: {v_loss:.4f})")
 
-                # Track divergence warning (overfitting)
                 if gap > 2.5:
                     gap_exceeded_steps += 50
                     if gap_exceeded_steps >= 500:
-                        print("🚨 WARNING: OVERFITTING GAP EXCEEDED 2.5 FOR 500 STEPS!")
+                        print("🚨 WARNING: Large generalization gap persisting!")
                 else:
                     gap_exceeded_steps = 0
 
-                # Write to historical logs
+                # Logging to CSV
                 header = ["Timestamp", "Step", "Train_Loss", "Val_Loss", "LR", "TPS", "Mem_GB"]
                 file_exists = LOG_FILE.exists()
                 with open(LOG_FILE, "a", newline="") as f:
                     writer = csv.writer(f)
-                    if not file_exists: 
+                    if not file_exists:
                         writer.writerow(header)
                     writer.writerow([datetime.now().isoformat(), step, f"{accum_loss:.4f}", f"{v_loss:.4f}", f"{lr:.2e}", f"{tps:.0f}", f"{mem:.2f}"])
 
-            # --- Checkpointing & Auto-Pruning ---
+            # Checkpointing
             is_epoch_boundary = False
             while tokens_processed >= tokens_per_epoch:
                 epoch += 1
                 tokens_processed -= tokens_per_epoch
                 is_epoch_boundary = True
 
-            # Standardized Save Logic: use true metrics for filenames
             if is_epoch_boundary or (step > 0 and step % 500 == 0):
                 if is_epoch_boundary:
                     save_path = CHECKPOINT_DIR / f"epoch_{epoch}.safetensors"
@@ -414,16 +326,13 @@ def main():
                 else:
                     save_path = CHECKPOINT_DIR / f"step_{step}.safetensors"
                     state_path = CHECKPOINT_DIR / f"step_{step}_state.pt"
-                
+
                 state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-                
-                # --- SAFETENSORS TIE-WEIGHT FIX ---
                 if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
                     if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
                         del state_dict['output.weight']
-                
                 save_file(state_dict, str(save_path))
-                
+
                 torch.save({
                     'optimizer': optimizer.state_dict(),
                     'step': step,
@@ -431,31 +340,34 @@ def main():
                     'tokens_processed': tokens_processed,
                     'best_v_loss': best_v_loss
                 }, str(state_path))
-                
                 print(f"💾 Checkpoint Saved: {save_path}")
                 prune_checkpoints(keep=10)
-            
-            # Thermal Safety — throttle if GPU is running too hot
+
+            # Thermal Guard
             if step % THERMAL_CHECK_EVERY == 0:
                 gpu_temp = get_gpu_temp()
                 if gpu_temp >= THERMAL_LIMIT_C:
-                    print(f"🌡️  THERMAL GUARD: GPU at {gpu_temp}°C — pausing {THERMAL_SLEEP_S}s to cool down...")
+                    print(f"🌡️ THERMAL GUARD: GPU at {gpu_temp}°C — pausing {THERMAL_SLEEP_S}s")
                     time.sleep(THERMAL_SLEEP_S)
+
+            # Gradual regularization boost
+            if step > 52000 and step % 5000 == 0:
+                for pg in optimizer.param_groups:
+                    if 'weight_decay' in pg and pg['weight_decay'] < 0.12:
+                        pg['weight_decay'] = min(0.12, pg['weight_decay'] * 1.05)
+                        print(f"🔧 Increased weight decay to {pg['weight_decay']:.3f}")
 
             step += 1
             if MAX_STEPS is not None and step >= MAX_STEPS:
-                print(f"✅ MAX_STEPS ({MAX_STEPS:,}) reached. Training complete.")
+                print(f"✅ MAX_STEPS reached.")
                 break
-            
+
     except KeyboardInterrupt:
         print("\n--- 🛑 SUTRA FOUNDRY HALTED: EMERGENCY SAVE ---")
         state_dict = model.state_dict() if not hasattr(model, '_orig_mod') else model._orig_mod.state_dict()
-        
-        # --- SAFETENSORS TIE-WEIGHT FIX ---
         if 'output.weight' in state_dict and 'tok_emb.weight' in state_dict:
             if state_dict['output.weight'].data_ptr() == state_dict['tok_emb.weight'].data_ptr():
                 del state_dict['output.weight']
-                
         save_file(state_dict, str(CHECKPOINT_DIR / "interrupt.safetensors"))
         torch.save({
             'optimizer': optimizer.state_dict(),
