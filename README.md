@@ -174,6 +174,17 @@ uv run python3 4-evaluation/build_norm_history.py --plot-only
 ```
 
 ![Norm History](assets/norm_history.png)
+<sub><em>
+<strong>Norm History notes.</strong>
+<strong>Epoch checkpoint</strong> means a model snapshot saved at an epoch boundary, for example <code>epoch_217.safetensors</code>.
+<strong>Active checkpoints only</strong> means the plot uses checkpoints currently in <code>3-model/pt/checkpoints/</code>, not archived older runs.
+<strong>Attention L2 norm</strong> is the average L2 magnitude of attention weight matrices, tracking how attention weights evolve during training.
+<strong>MLP L2 norm</strong> is the average L2 magnitude of feed-forward or MLP weight matrices, tracking how dense transformation layers evolve.
+<strong>Global peak intensity</strong> is the largest absolute weight value found in the inspected weight matrices, useful for spotting weight spikes or instability.
+<strong>Mechanistic contractions</strong> is a diagnostic view of whether weight magnitudes are consolidating, drifting, or becoming unstable during training.
+<strong>Weight consolidation</strong> means gradual, stable movement in weight norms rather than sudden spikes or erratic changes.
+The generalisation plot is the main model-quality signal; the norm plot is a supporting stability diagnostic.
+</em></sub>
 
 ### 3. Generalisation Gap Monitor
 
@@ -190,6 +201,22 @@ uv run python3 4-evaluation/generalisation_gap_monitor.py
 ```
 
 ![Generalisation Gap](assets/generalisation_gap.png)
+<sub><em>
+<strong>Generalisation Gap Monitor notes.</strong>
+<strong>CE</strong> means cross-entropy loss, lower is better.
+<strong>Train eval CE</strong> is loss measured on the training split while the model is in evaluation mode, so it is not the noisy live batch loss.
+<strong>Val eval CE</strong> is loss measured on the validation split while the model is in evaluation mode, and is the main sampled validation signal.
+<strong>Aligned CE</strong> is a visual comparison view where validation CE is shifted to the train baseline so train and validation curve shapes can be compared.
+<strong>Raw CE</strong> shows the true unshifted cross-entropy values and is the scientific evidence panel.
+<strong>Val shifted</strong> means validation CE was moved only for visual alignment; the raw CE panel still shows the real value.
+<strong>Best sampled CE</strong> is the lowest validation CE seen during regular sampled validation checks.
+<strong>Best full CE</strong> is the deterministic full-validation CE used to promote <code>best_grok_model.safetensors</code>.
+<strong>Gap</strong> means <code>Val_Loss - Train_Loss</code>; a negative gap means validation loss is lower than train loss.
+<strong>Stable negative gap</strong> means the validation split is easier than the train split, so the gap staying below zero is expected for this run.
+<strong>Val PPL</strong> means validation perplexity, calculated as <code>exp(Val CE)</code>, lower is better.
+<strong>Steps</strong> are optimizer training steps completed.
+</em></sub>
+
 
 ### 4. The Ashtavakra Audit
 
@@ -214,7 +241,7 @@ uv run python3 4-evaluation/ashtavakra_audit.py
 
 ![Ashtavakra Audit](assets/ashtavakra-audit.png)
 
-### Run Full Pipeline
+### Run Full Eval Pipeline
 
 ```bash
 bash 4-evaluation/evaluate.sh
