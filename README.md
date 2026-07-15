@@ -1,50 +1,57 @@
-# 🕉️ SageGPT — Sanskrit Small Language Model (SLM)
+# 🕉️ SageGPT - Sanskrit Small Language Model (SLM)
 
 > *"To find the Sutra in the Signal."*
 
-**Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **entirely from scratch** on a specialised corpus of **~140M ultra-pure Sanskrit tokens** (225M characters). It is not a fine-tuned version of an existing LLM — it is built ground-up, specifically for one language and one domain: classical and Vedic Sanskrit literature.
+**Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **from scratch** on a specialised corpus of **~140M Sanskrit tokens**. It is not a fine-tuned version of an existing LLM. It is built ground-up for one language and one domain: classical and Vedic Sanskrit literature.
+
+The goal is not to compete with large general-purpose LLMs. The goal is to test whether a compact, carefully trained model can learn Sanskrit-specific structure, including morphology, sandhi patterns, verse-like continuation, and domain vocabulary, from a focused Sanskrit corpus.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
-![Model](https://img.shields.io/badge/model-7.5M%20SLM-purple)
+![Model](https://img.shields.io/badge/model-7.2M%20SLM-purple)
 ![Training](https://img.shields.io/badge/training-from%20scratch-orange)
 ![Dataset](https://img.shields.io/badge/data-140M%20Sanskrit%20tokens-blue)
 ![Hardware](https://img.shields.io/badge/hardware-NVIDIA%20DGX%20Spark-brightgreen?logo=nvidia&logoColor=white)
 ![Context](https://img.shields.io/badge/context-1024-lightgrey)
 
-Sanskrit is structurally unlike modern languages. It has complex *sandhi* (phonological fusion rules), rich case inflection across 8 cases, strict metrical structure in verse, and a philosophical vocabulary that does not map into English-centric model spaces. General-purpose LLMs handle Sanskrit poorly. 
+Sanskrit is structurally unlike most modern high-resource languages. It has complex *sandhi* rules, rich case inflection across 8 cases, strict metrical structure in verse, and a philosophical vocabulary that often does not map cleanly into English-centric model spaces. General-purpose LLMs can generate Sanskrit-looking text, but small domain-specific models make the training dynamics easier to inspect and reason about.
 
 ---
 
 ## 🏛️ Architecture
 
-A **~7.5M parameter decoder-only Transformer**, right-sized relative to the corpus to prevent catastrophic overfitting while maximising generalisation.
+A compact decoder-only Transformer, sized for repeated experimentation on a home DGX Spark setup while preserving enough capacity to learn Sanskrit morphology and sequence structure.
 
 | Component | Choice | Rationale |
 | :--- | :--- | :--- |
-| **Parameters** | ~7.5M | Right-sized for 132.7M tokens — prevents memorisation, forces generalisation |
-| **Depth** | 6 Layers, 8 Attention Heads | Hierarchical capacity for Sanskrit morphological rules |
-| **Dimensions** | 256 Embedding Dim | Efficient semantic mapping of philosophical concepts |
-| **Context Window** | 1024 Tokens | Ingests full *shlokas* and chapters in a single pass |
-| **Feed-Forward** | **SwiGLU** | Gated activation (Swish × Gate) — smoother loss surface, used by LLaMA-class models |
-| **Positional Encoding** | **RoPE** | Rotary embeddings — relative position awareness, no learned position table |
-| **Normalisation** | **RMSNorm** | Faster than LayerNorm; no mean-centering |
-| **Weight Tying** | `output.weight = tok_emb.weight` | Shared input/output embeddings — reduces parameters, stabilises Softmax |
-| **Tokenizer** | SentencePiece Unigram, 8,192 vocab | Reduces *sandhi* fragmentation vs BPE; keeps compound words intact |
-| **Precision** | `bfloat16` via `torch.autocast` | Leverages DGX Spark (GB10) hardware; stable dynamic range |
+| **Parameters** | ~7.2M | Small enough for fast iteration, large enough for Sanskrit structure learning |
+| **Depth** | 6 Layers, 8 Attention Heads | Hierarchical capacity for morphology and phrase-level dependencies |
+| **Dimensions** | 256 Embedding Dim | Efficient representation size for a focused Sanskrit corpus |
+| **Context Window** | 1024 Tokens | Handles shlokas, prose passages, and chapter fragments in one pass |
+| **Feed-Forward** | SwiGLU | Gated activation, smoother training dynamics |
+| **Positional Encoding** | RoPE | Rotary embeddings for relative position awareness |
+| **Normalisation** | RMSNorm | Lightweight normalization without mean-centering |
+| **Weight Tying** | `output.weight = tok_emb.weight` | Shared input/output embeddings reduce parameters and stabilize output projection |
+| **Tokenizer** | SentencePiece Unigram, 8,192 vocab | Reduces fragmentation in Sanskrit compounds compared with simple byte or BPE setups |
+| **Precision** | `bfloat16` via `torch.autocast` | Uses DGX Spark hardware efficiently with stable dynamic range |
 
 ---
 
 ## 🚦 Execution Pipeline
 
-### Step 1 — Deep Data Purification (Visuddhi V5)
+### Step 1 - Deep Data Purification
 
-The **Visuddhi V5** engine transforms ~14GB of raw manuscript sources into a purified Sanskrit gold-standard corpus under a **"Zero-Poison" policy** — zero tolerance for vernacular contamination.
+The purification stage transforms raw Sanskrit source material into a cleaner training corpus. The pipeline is designed to reduce OCR noise, obvious vernacular contamination, malformed Unicode, and non-Sanskrit fragments while preserving Devanagari structure and Vedic markers where possible.
 
-- **Lazy OCR Fallback** — Tesseract (`san+hin`) for scanned manuscripts; fast extraction for searchable PDFs
-- **Nukta & Hindi Shield** — 100% rejection of Hindi, Marathi, Pali, and Prakrit markers
-- **Decompression Bomb Safety** — handles high-resolution 100MP manuscript scans
-- **NFKC Strict Normalisation** — prevents shattering of Devanagari conjuncts and ligatures
-- **Swara Protection** — preserves Anusvara, Visarga, and Vedic accent markers
+This is a strict filtering pipeline, but it should not be interpreted as a formal guarantee of zero contamination. Corpus quality is continuously audited and improved.
+
+Main features:
+
+- **OCR fallback** for scanned manuscripts when fast text extraction is unavailable
+- **Devanagari normalization** using strict Unicode cleanup
+- **Nukta and vernacular marker filtering** to reduce Hindi, Marathi, Pali, Prakrit, and OCR-adjacent noise
+- **Large image safety** for high-resolution manuscript scans
+- **Swara protection** for Sanskrit and Vedic marks where retained by the source
+- **Audit-friendly output** for downstream inspection and correction
 
 ```bash
 uv run python3 1-data/05-scripts/visuddhiv5.py
@@ -52,9 +59,9 @@ uv run python3 1-data/05-scripts/visuddhiv5.py
 
 ![Visuddhi Run](assets/visuddhi-run.png)
 
-### Step 2 — Refine Corpus (Linguistic Scalpel)
+### Step 2 - Refine Corpus
 
-Precision filtering for medieval vernacular (Awadhi/Brij) markers. Sentences ending with `हि` or `उ` patterns are flagged and removed to ensure Sutra-grade purity.
+A second filtering pass removes additional noisy patterns, repeated fragments, and likely vernacular residues. The goal is to improve Sanskrit density without overclaiming perfect linguistic separation.
 
 ```bash
 uv run python3 1-data/05-scripts/refine_corpus.py
@@ -62,9 +69,9 @@ uv run python3 1-data/05-scripts/refine_corpus.py
 
 ![Refine Corpus](assets/refine-corpus.png)
 
-### Step 3 — Sutra Tokenization
+### Step 3 - Sutra Tokenization
 
-Trains a SentencePiece unigram model with an **8,192-word vocabulary** on the ~139M token Sanskrit corpus.
+Trains a SentencePiece Unigram tokenizer with an 8,192 token vocabulary on the Sanskrit corpus.
 
 ```bash
 uv run python3 2-tokenizer/sutra_tokenizer.py
@@ -72,9 +79,9 @@ uv run python3 2-tokenizer/sutra_tokenizer.py
 
 ![Tokenization](assets/sutra-tokenizer.png)
 
-### Step 4 — DGX Training
+### Step 4 - DGX Training
 
-`train_dgx.py` is the entry point — it launches `3-training/src/train_engine_dgx.py`, which runs the full training loop with `torch.compile` graph optimisation, fused SDPA (FlashAttention), cosine LR decay, gradient accumulation, thermal throttling, and auto-resume from any checkpoint.
+`train_dgx.py` is the entry point. It launches `3-training/src/train_engine_dgx.py`, which runs the full training loop with `torch.compile`, fused SDPA, gradient accumulation, checkpoint pruning, thermal guardrails, and emergency-save recovery.
 
 ```bash
 uv run python3 train_dgx.py
@@ -86,21 +93,40 @@ uv run python3 train_dgx.py
 
 ## 🔥 Training Configuration
 
+Current public training marker:
+
+```bash
+git checkout v0.1.4-best-restart-lr2e5
+```
+
+This recipe is designed for continuing from the best checkpoint with a fresh optimizer state. It uses a flat `2e-5` learning rate after warmup to avoid high-LR shock when restarting from `best_grok_model.safetensors`.
+
 | Hyperparameter | Value | Purpose |
 | :--- | :--- | :--- |
-| **Optimizer** | AdamW (β₁=0.9, β₂=0.95) | Standard for transformers |
-| **Learning Rate** | 2e-4 → 6e-5 (cosine) | Warmup 150 steps, decays over 1,500 |
-| **Weight Decay** | 0.05 | L2 regularisation on weight matrices only |
-| **Dropout** | 0.1 (config.py) | Applied to embeddings, attention, and MLP residuals |
-| **Label Smoothing** | 0.1 | Softens cross-entropy; prevents overconfident wrong predictions |
-| **Gradient Clipping** | 1.0 | Prevents gradient explosion |
-| **Batch Size** | 256 (global) / 64 (micro) | 4-step gradient accumulation |
-| **Training Duration** | Indefinite (`MAX_STEPS = None`) | Ctrl+C triggers emergency save and clean exit |
-| **Thermal Guard** | Pause at 75°C | Home DGX Spark thermal safety |
+| **Optimizer** | AdamW, β₁=0.9, β₂=0.95 | Standard transformer optimizer |
+| **Learning Rate** | Flat `2e-5` after warmup | Stable best-checkpoint restart recipe |
+| **Warmup** | 150 steps | Avoids abrupt optimizer shock |
+| **Weight Decay** | 0.05 | Regularises weight matrices |
+| **Dropout** | 0.1 | Applied to embeddings, attention, and MLP residuals |
+| **Label Smoothing** | 0.1 | Reduces overconfident wrong predictions |
+| **Gradient Clipping** | 1.0 | Guards against gradient spikes |
+| **Batch Size** | 256 global / 64 micro | 4-step gradient accumulation |
+| **Training Duration** | Indefinite, `MAX_STEPS = None` | Ctrl+C triggers emergency save and clean exit |
+| **Thermal Guard** | Pause at 75°C | DGX Spark thermal safety |
 
-### Grokking Strategy
+### Training Signal Strategy
 
-Training is configured to **resist memorisation and force generalisation** — the phenomenon called **grokking**, where a model initially overfits, then phase-shifts into true rule-based generalisation. The signal is the **generalisation gap closing**: validation loss converging toward training loss after a sustained period of divergence. The training engine fires a `🚨 PHASE SHIFT DETECTED` alert when validation loss drops below 2.5.
+The patched trainer logs apples-to-apples evaluation metrics:
+
+| Column | Meaning |
+| :--- | :--- |
+| `Train_Loss` | Train split raw cross-entropy in eval mode |
+| `Val_Loss` | Validation split raw cross-entropy in eval mode |
+| `Gap` | `Val_Loss - Train_Loss` |
+| `Live_Train_Loss` | Live training-batch loss for operational monitoring |
+| `Best_Val_Raw_Loss` | Deterministic full-validation best used for checkpoint promotion |
+
+The validation split is currently easier than the train split, so a stable negative gap is expected. The key evidence is whether validation raw CE and deterministic full-validation best continue improving without instability.
 
 ---
 
@@ -108,16 +134,19 @@ Training is configured to **resist memorisation and force generalisation** — t
 
 | Guardrail | Implementation | Goal |
 | :--- | :--- | :--- |
-| **Normalisation** | NFKC Strict | Prevents shattering of complex conjuncts/ligatures |
-| **Linguistic Isolation** | Disjoint stopword rejection | Removes Hindi, Marathi, Pali, Prakrit |
-| **Precision OCR** | Tesseract `san+hin` | Accurate recovery of scanned Sanskrit manuscripts |
-| **Vedic Integrity** | Swara Protection | Preserves Anusvara, Visarga, and Vedic accents |
+| **Unicode Normalisation** | NFKC-focused cleanup | Reduce malformed Devanagari and inconsistent ligature forms |
+| **Language Filtering** | Marker-based rejection and corpus audit | Reduce obvious Hindi, Marathi, Pali, Prakrit, and OCR residues |
+| **OCR Recovery** | Tesseract-assisted fallback where needed | Recover text from scanned Sanskrit manuscripts |
+| **Vedic Integrity** | Swara-aware preservation | Avoid dropping Sanskrit and Vedic accent marks unnecessarily |
+| **Corpus Auditability** | Scripted logs and measurable filters | Make contamination and repetition visible rather than assumed away |
+
+These guardrails are best-effort engineering controls. They improve corpus quality, but they do not claim perfect linguistic purity.
 
 ---
 
 ## 📊 Evaluation & Mechanistic Suite
 
-All evaluation scripts share a common foundation — `eval_utils.py` — which centralises the model architecture, checkpoint resolution, and weight-tied loading logic.
+All evaluation scripts share a common foundation: `eval_utils.py`. It centralises the model architecture, checkpoint resolution, and weight-tied loading logic.
 
 | Shared Module | Role |
 | :--- | :--- |
@@ -135,18 +164,26 @@ uv run python3 4-evaluation/sutra_probe_pt.py
 
 ### 2. Weight Norm History
 
-Scans all `epoch_*.safetensors` checkpoints, computes L2 norms of Attention and MLP weight matrices, accumulates to CSV, and renders `norm_history.png`. Tracks **weight consolidation** — the mechanistic signature of grokking.
+Rebuilds norm history from active `epoch_*.safetensors` checkpoints in `3-model/pt/checkpoints/`, computes L2 norms of Attention and MLP weight matrices, writes `norm_tracking_pt.csv`, and renders `norm_history.png`.
+
+This avoids mixing stale archived checkpoints into current-run evidence.
 
 ```bash
-uv run python3 4-evaluation/build_norm_history.py            # full scan + plot
-uv run python3 4-evaluation/build_norm_history.py --plot-only    # re-plot existing CSV
+uv run python3 4-evaluation/build_norm_history.py
+uv run python3 4-evaluation/build_norm_history.py --plot-only
 ```
 
 ![Norm History](assets/norm_history.png)
 
 ### 3. Generalisation Gap Monitor
 
-Plots Train vs. Validation loss on a log scale with a secondary panel for the gap and loss turbulence (rolling variance). Fires a **🔥 PHASE TRANSITION ALERT** when validation loss drops >5% relative to its recent average.
+Renders an evidence plot from `6-logs/training/training_history_dgx.csv`.
+
+| Panel | Meaning |
+| :--- | :--- |
+| **Aligned CE** | Validation CE shifted to the train baseline for visual comparison |
+| **Raw CE** | True train raw CE, true validation raw CE, sampled best, and deterministic full-validation best |
+| **Gap** | True `Val_Loss - Train_Loss` over time |
 
 ```bash
 uv run python3 4-evaluation/generalisation_gap_monitor.py
@@ -156,13 +193,15 @@ uv run python3 4-evaluation/generalisation_gap_monitor.py
 
 ### 4. The Ashtavakra Audit
 
-An 8-bend Sanskrit generative consistency test, named after the sage Ashtavakra (8 physical bends). Each bend is a Sanskrit prompt tested against an expected token in the completion — **STRAIGHT** if present, **CROOKED** if not.
+An 8-bend Sanskrit generative consistency test, named after the sage Ashtavakra. Each bend is a Sanskrit prompt tested against an expected token in the completion: **STRAIGHT** if present, **CROOKED** if not.
+
+This is a heuristic generation audit, not a formal benchmark.
 
 | Bend | Prompt | Expected | Tests |
 | :--- | :--- | :--- | :--- |
 | 1. Phonetic Stability | `ॐ` | `नमः` | Basic phoneme chaining |
 | 2. Invocation | `असतो मा` | `सद्गमय` | Brhadaranyaka Upanishad mantra |
-| 3. Case Inflection | `राम` | `ः` | Nominative *visarga* suffix |
+| 3. Case Inflection | `राम` | `ः` | Nominative visarga suffix |
 | 4. Sandhi Logic | `नर` | `इन्द्र` | Compound word formation |
 | 5. Concept Flow | `यथा नद्यः` | `समुद्रे` | River-to-ocean Upanishad metaphor |
 | 6. Verse Sequence | `ईशा वास्य` | `सर्वं` | Ishavasyopanishad opening |
@@ -181,13 +220,23 @@ uv run python3 4-evaluation/ashtavakra_audit.py
 bash 4-evaluation/evaluate.sh
 ```
 
-Executes in order: **Probe → Norms → Gap → Audit → Inference** (10 Sanskrit prompts piped through the inference engine).
+Optional explicit checkpoint:
+
+```bash
+bash 4-evaluation/evaluate.sh 3-model/pt/checkpoints/best_grok_model.safetensors
+```
+
+Executes in order:
+
+```text
+Probe -> Norms -> Gap -> Audit -> Inference
+```
 
 ---
 
 ## 🕉️ Inference
 
-`inference.py` is the entry point — it validates CUDA availability and launches `5-inference/inference_engine_pt.py`, which uses a KV-cache for autoregressive generation, top-p sampling with repetition penalty, and `bfloat16` autocast.
+`inference.py` is the entry point. It validates CUDA availability and launches `5-inference/inference_engine_pt.py`, which uses a KV cache for autoregressive generation, top-p sampling, repetition penalty, and `bfloat16` autocast.
 
 ```bash
 uv run python3 inference.py
@@ -197,11 +246,27 @@ uv run python3 inference.py
 
 ## 🔧 Utilities
 
-**Prune old checkpoints (keeps latest 10):**
+**Prune old checkpoints by modification time:**
+
 ```bash
 uv run python3 3-training/src/prune_checkpoints.py
 ```
 
+Dry run:
+
+```bash
+uv run python3 3-training/src/prune_checkpoints.py --dry-run --verbose
+```
+
 ---
 
-> 🕉️ *Om Tat Sat* (ॐ तत् सत्) — The Absolute is Truth
+## 📌 Notes
+
+- Checkpoints and run logs are intentionally kept out of Git.
+- Public images under `assets/` are snapshots, not live training artifacts.
+- Current live outputs are generated under `6-logs/evaluation/`.
+- The model is experimental. Loss curves and audits are evidence for training progress, not proof of Sanskrit understanding.
+
+---
+
+> 🕉️ *Om Tat Sat* (ॐ तत् सत्) - The Absolute is Truth
