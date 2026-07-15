@@ -1,10 +1,4 @@
-"""
-generalisation_gap_monitor.py - plot train/validation evaluation loss.
-
-Compatible with both the legacy Sage-GPT CSV and the patched CSV. With the
-patched trainer, Train_Loss and Val_Loss are eval-mode raw cross-entropy, so the
-gap is apples-to-apples.
-"""
+"""generalisation_gap_monitor.py - README-style aligned CE plus raw evidence plot."""
 
 import csv
 import math
@@ -22,59 +16,75 @@ try:
     OUTPUT_PLOT = config.LOG_DIR / "evaluation" / "generalisation_gap.png"
     WARMUP_STEPS = 150
 except ImportError:
-    print("Critical: config.py not found.")
+    print("config.py not found.")
     sys.exit(1)
 
 
-def _to_float(value, default=None):
+def to_float(value, default=None):
     try:
-        result = float(value)
-        if math.isnan(result) or math.isinf(result):
-            return default
-        return result
-    except Exception:
-        return default
+        x = float(value)
+        if math.isfinite(x):
+            return x
+    except (TypeError, ValueError):
+        pass
+    return default
 
 
-def rolling_var(data: list[float], window: int = 10) -> list[float]:
-    result = []
-    for i in range(len(data)):
-        chunk = data[max(0, i - window + 1): i + 1]
-        if len(chunk) < 2:
-            result.append(0.0)
-            continue
-        mean = sum(chunk) / len(chunk)
-        result.append(sum((v - mean) ** 2 for v in chunk) / (len(chunk) - 1))
-    return result
+def finite(values):
+    return [v for v in values if v is not None and math.isfinite(v)]
 
 
-def load_rows():
+def rolling_mean(values, window):
+    out = []
+    for i in range(len(values)):
+        chunk = finite(values[max(0, i - window + 1) : i + 1])
+        out.append(sum(chunk) / len(chunk) if chunk else None)
+    return out
+
+
+def tight_ylim(ax, values, min_pad=0.002, pad_ratio=0.14):
+    vals = finite(values)
+    if not vals:
+        return
+
+    lo = min(vals)
+    hi = max(vals)
+
+    if hi <= lo:
+        hi = lo + min_pad
+
+    pad = max((hi - lo) * pad_ratio, min_pad)
+    ax.set_ylim(lo - pad, hi + pad)
+
+
+def read_history():
     if not LOG_FILE.exists():
-        print(f"No log found at {LOG_FILE}.")
+        print(f"No log found at {LOG_FILE}")
         return []
 
     rows = []
-    with open(LOG_FILE, newline="") as f:
+    with LOG_FILE.open(newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            step = _to_float(row.get("Step"))
-            train_loss = _to_float(row.get("Train_Loss"))
-            val_loss = _to_float(row.get("Val_Loss"))
-            live_train_loss = _to_float(row.get("Live_Train_Loss"))
-            gap = _to_float(row.get("Gap"))
+            step = to_float(row.get("Step"))
+            train = to_float(row.get("Train_Loss"))
+            val = to_float(row.get("Val_Loss"))
+            gap = to_float(row.get("Gap"))
+            best_full = to_float(row.get("Best_Val_Raw_Loss"))
 
-            if step is None or train_loss is None or val_loss is None:
+            if step is None or train is None or val is None:
                 continue
+
             if gap is None:
-                gap = val_loss - train_loss
+                gap = val - train
 
             rows.append(
                 {
                     "step": step,
-                    "train": train_loss,
-                    "val": val_loss,
+                    "train": train,
+                    "val": val,
                     "gap": gap,
-                    "live_train": live_train_loss,
+                    "best_full": best_full,
                 }
             )
 
@@ -82,53 +92,49 @@ def load_rows():
     return rows
 
 
-def print_status(rows):
-    latest = rows[-1]
-    latest_ppl = math.exp(latest["val"]) if latest["val"] < 20 else float("inf")
-    print(
-        f"Latest: step={int(latest['step'])} | "
-        f"train_ce={latest['train']:.4f} | val_ce={latest['val']:.4f} | "
-        f"gap={latest['gap']:.4f} | val_ppl={latest_ppl:.2f}"
-    )
+def shifted_to_match_start(source, target):
+    source_vals = finite(source)
+    target_vals = finite(target)
 
-    if len(rows) >= 20:
-        recent = rows[-20:]
-        recent_best = min(r["val"] for r in recent)
-        recent_avg = sum(r["val"] for r in recent) / len(recent)
-        print(f"Recent 20 evals: best_val_ce={recent_best:.4f} | avg_val_ce={recent_avg:.4f}")
+    if not source_vals or not target_vals:
+        return [None for _ in source]
 
-    if len(rows) >= 30:
-        prev = rows[-30:-10]
-        recent = rows[-10:]
-        prev_avg = sum(r["val"] for r in prev) / len(prev)
-        recent_avg = sum(r["val"] for r in recent) / len(recent)
-        delta_pct = (prev_avg - recent_avg) / prev_avg if prev_avg > 0 else 0.0
-        if delta_pct > 0.02:
-            print(f"Validation is improving: recent avg down {delta_pct * 100:.2f}%.")
-        elif abs(delta_pct) <= 0.005:
-            print("Validation appears plateaued over the latest window.")
+    shift = target_vals[0] - source_vals[0]
+
+    out = []
+    for value in source:
+        if value is None or not math.isfinite(value):
+            out.append(None)
         else:
-            print(f"Validation has worsened: recent avg up {-delta_pct * 100:.2f}%.")
+            out.append(value + shift)
+
+    return out, shift
 
 
 def plot_curves():
-    rows = load_rows()
+    rows = read_history()
     if len(rows) < 3:
         print("Not enough data points.")
         return
 
     steps = [r["step"] for r in rows]
-    train_loss = [r["train"] for r in rows]
-    val_loss = [r["val"] for r in rows]
+    train = [r["train"] for r in rows]
+    val = [r["val"] for r in rows]
     gap = [r["gap"] for r in rows]
-    live_train = [r["live_train"] for r in rows]
-    train_var = rolling_var(train_loss, window=10)
 
-    latest_gap = gap[-1]
-    latest_val = val_loss[-1]
-    latest_ppl = math.exp(latest_val) if latest_val < 20 else float("inf")
+    window = min(25, max(5, len(rows) // 40))
 
-    print_status(rows)
+    train_roll = rolling_mean(train, window)
+    val_roll = rolling_mean(val, window)
+    gap_roll = rolling_mean(gap, window)
+
+    val_aligned, val_shift = shifted_to_match_start(val_roll, train_roll)
+
+    latest = rows[-1]
+    best_sample = min(rows, key=lambda r: r["val"])
+
+    best_full_values = finite([r["best_full"] for r in rows])
+    best_full = min(best_full_values) if best_full_values else None
 
     import matplotlib
 
@@ -136,56 +142,134 @@ def plot_curves():
     import matplotlib.pyplot as plt
 
     plt.style.use("dark_background")
-    fig, (ax1, ax2) = plt.subplots(
-        nrows=2,
-        figsize=(14, 10),
+
+    fig, (ax_aligned, ax_raw, ax_gap) = plt.subplots(
+        nrows=3,
+        figsize=(16, 10),
         sharex=True,
-        gridspec_kw={"height_ratios": [3, 1]},
+        gridspec_kw={"height_ratios": [1.8, 1.45, 1.15]},
     )
 
-    ax1.plot(steps, train_loss, label="Train eval CE", color="#8FBC8F", linewidth=1.5)
-    ax1.plot(steps, val_loss, label="Val eval CE", color="#F4A460", linewidth=2.2)
+    fig.patch.set_facecolor("#0B0B0B")
 
-    if any(v is not None for v in live_train):
-        live_steps = [s for s, v in zip(steps, live_train) if v is not None]
-        live_values = [v for v in live_train if v is not None]
-        if live_steps:
-            ax1.plot(live_steps, live_values, label="Live train smoothed CE", color="#AAAAAA", alpha=0.35, linewidth=1.0)
+    for ax in (ax_aligned, ax_raw, ax_gap):
+        ax.set_facecolor("#0B0B0B")
+        ax.grid(True, alpha=0.18, linewidth=0.8)
+        ax.tick_params(colors="#D8D8D8")
+        for spine in ax.spines.values():
+            spine.set_color("#A0A0A0")
 
-    ax1.axvline(x=WARMUP_STEPS, color="#555555", linestyle="--", label="Warmup End")
-    ax1.set_yscale("log")
-    ax1.set_ylabel("Cross-entropy loss")
-    ax1.set_title(
+    # Panel 1: README-style aligned comparison.
+    ax_aligned.plot(
+        steps,
+        train_roll,
+        color="#8FBC8F",
+        linewidth=2.2,
+        label="Train eval CE",
+    )
+    ax_aligned.plot(
+        steps,
+        val_aligned,
+        color="#F4A460",
+        linewidth=2.2,
+        label=f"Val eval CE, shifted +{val_shift:.4f}",
+    )
+    ax_aligned.axvline(WARMUP_STEPS, color="#777777", linestyle="--", linewidth=1.0, alpha=0.45)
+    ax_aligned.set_ylabel("Aligned CE")
+    ax_aligned.legend(loc="upper right", framealpha=0.25)
+    tight_ylim(ax_aligned, train_roll + val_aligned, min_pad=0.004)
+
+    # Panel 2: true raw CE values.
+    ax_raw.plot(
+        steps,
+        train_roll,
+        color="#8FBC8F",
+        linewidth=1.9,
+        alpha=0.95,
+        label="Train raw eval CE",
+    )
+    ax_raw.plot(
+        steps,
+        val_roll,
+        color="#F4A460",
+        linewidth=1.9,
+        alpha=0.95,
+        label="Val raw eval CE",
+    )
+    ax_raw.scatter(
+        [best_sample["step"]],
+        [best_sample["val"]],
+        color="#FFFFFF",
+        s=34,
+        zorder=5,
+        label=f"Best sampled {best_sample['val']:.6f}",
+    )
+
+    if best_full is not None:
+        ax_raw.axhline(
+            best_full,
+            color="#FFD166",
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.9,
+            label=f"Best full CE {best_full:.6f}",
+        )
+
+    ax_raw.axvline(WARMUP_STEPS, color="#777777", linestyle="--", linewidth=1.0, alpha=0.45)
+    ax_raw.set_ylabel("Raw eval CE")
+    ax_raw.legend(loc="upper right", framealpha=0.25)
+    tight_ylim(ax_raw, train_roll + val_roll + ([best_full] if best_full is not None else []), min_pad=0.01)
+
+    # Panel 3: true raw generalization gap.
+    ax_gap.plot(
+        steps,
+        gap,
+        color="#87CEFA",
+        linewidth=0.9,
+        alpha=0.45,
+        linestyle=":",
+        label="Gap raw",
+    )
+    ax_gap.plot(
+        steps,
+        gap_roll,
+        color="#FF6347",
+        linewidth=1.8,
+        label="Gap rolling",
+    )
+    ax_gap.axhline(0.0, color="#CCCCCC", linestyle="--", linewidth=1.0, alpha=0.65)
+    ax_gap.axvline(WARMUP_STEPS, color="#777777", linestyle="--", linewidth=1.0, alpha=0.45)
+    ax_gap.set_ylabel("Val minus train")
+    ax_gap.set_xlabel("Global training steps")
+    ax_gap.legend(loc="upper right", framealpha=0.25)
+    tight_ylim(ax_gap, gap, min_pad=0.005)
+
+    best_full_text = f"{best_full:.6f}" if best_full is not None else "n/a"
+
+    fig.suptitle(
         "SAGE-GPT Generalization Monitor\n"
-        f"Gap: {latest_gap:.4f} | Val PPL: {latest_ppl:.2f} | Steps: {int(steps[-1])}",
-        fontsize=16,
+        f"Gap: {latest['gap']:.4f} | Val PPL: {math.exp(latest['val']):.2f} | "
+        f"Steps: {int(latest['step'])} | Best full CE: {best_full_text}",
+        fontsize=17,
         fontweight="bold",
+        color="#F2F2F2",
     )
-    ax1.legend(loc="upper right")
-    ax1.grid(True, alpha=0.1)
 
-    ax2.plot(steps, gap, color="#FF6347", linewidth=1.5, label="Val CE - train CE")
-    ax2.axhline(y=0, color="#666666", linestyle="--", alpha=0.6)
-    ax2.fill_between(steps, gap, color="#FF6347", alpha=0.15)
+    fig.text(
+        0.01,
+        0.01,
+        "Top panel aligns validation CE to the train baseline for visual comparison. "
+        "Middle and bottom panels show true raw CE and true raw gap.",
+        color="#A8A8A8",
+        fontsize=9,
+    )
 
-    ax3 = ax2.twinx()
-    safe_var_steps = []
-    safe_var = []
-    for s, v in zip(steps, train_var):
-        if v > 0:
-            safe_var_steps.append(s)
-            safe_var.append(v)
-    if safe_var:
-        ax3.plot(safe_var_steps, safe_var, color="#87CEFA", linestyle=":", linewidth=1, label="Train CE turbulence")
-        ax3.set_yscale("log")
-    ax2.set_xlabel("Global training steps")
-    ax2.set_ylabel("Generalization gap")
-    ax3.set_ylabel("Turbulence", color="#87CEFA")
-
-    plt.tight_layout()
     OUTPUT_PLOT.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUTPUT_PLOT, dpi=180, facecolor="#0B0B0B")
-    print(f"Gap monitor rendered: {OUTPUT_PLOT}")
+    fig.tight_layout(rect=[0, 0.025, 1, 0.93])
+    fig.savefig(OUTPUT_PLOT, dpi=170, facecolor=fig.get_facecolor(), bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[OK] Generalization monitor rendered: {OUTPUT_PLOT}")
 
 
 if __name__ == "__main__":
