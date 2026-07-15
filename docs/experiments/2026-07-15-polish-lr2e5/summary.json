@@ -1,0 +1,59 @@
+{
+  "experiment": "polish_lr2e5_after_eval_metrics_fix",
+  "created_at": "2026-07-15T10:10:11",
+  "branch": "polish-lr-2e-5",
+  "commit": "9d3d0ffe42d2b14681b849661073ee8edbbd593c",
+  "main_commit_at_eval_fix_merge": "194e1d6",
+  "baseline_before_polish": {
+    "full_val_raw_ce": 1.185215,
+    "note": "Tracked baseline before LR 2e-5 polish."
+  },
+  "polish_result": {
+    "lr": "2e-5 flat",
+    "stopped_epoch": 12,
+    "stopped_step": 3181,
+    "best_confirmed_full_val_raw_ce": 1.185209,
+    "best_sampled_step": 3050,
+    "best_sampled_train_raw_ce": 1.515505,
+    "best_sampled_val_raw_ce": 1.187649,
+    "best_sampled_gap": -0.327856,
+    "last_step": 3150,
+    "last_val_raw_ce": 1.188328
+  },
+  "conclusion": [
+    "Flat 2e-5 polish improved sampled validation compared with the 6e-5 plateau.",
+    "Confirmed full-validation raw CE improved only slightly, from about 1.185215 to about 1.185209.",
+    "Treat the polish LR change as experimental until qualitative evaluation confirms better generations.",
+    "Do not merge the full polish branch into main yet."
+  ],
+  "checkpoint_policy": {
+    "git_tracks_checkpoints": false,
+    "note": "GitHub stores experiment metadata and hashes only. Exact model recovery requires external checkpoint backup."
+  },
+  "checkpoint_hashes": [
+    {
+      "path": "3-model/pt/checkpoints/best_grok_model.safetensors",
+      "sha256": "797b3a07eda430750a64d5f15428e0eb061d1ec01a9d1ccae14cfea7e5330b1a"
+    },
+    {
+      "path": "3-model/pt/checkpoints/interrupt.safetensors",
+      "sha256": "030455a7e9e6fdd1ce1bedae7c3e3109399e2b9fe6e3965afa17834c303d75cb"
+    },
+    {
+      "path": "3-model/pt/checkpoints/interrupt_state.pt",
+      "sha256": "ecc61163b552d43f6b7cc453bb01da934dc86cd96f5ac1442eed69a5369ec85a"
+    },
+    {
+      "path": "3-model/pt/run_archives/polish_lr2e5_step3150/best_grok_model.full_rawce_1.185209.safetensors",
+      "sha256": "797b3a07eda430750a64d5f15428e0eb061d1ec01a9d1ccae14cfea7e5330b1a"
+    },
+    {
+      "path": "3-model/pt/run_archives/polish_lr2e5_step3150/interrupt_step3150.safetensors",
+      "sha256": "030455a7e9e6fdd1ce1bedae7c3e3109399e2b9fe6e3965afa17834c303d75cb"
+    },
+    {
+      "path": "3-model/pt/run_archives/polish_lr2e5_step3150/interrupt_state_step3150.pt",
+      "sha256": "ecc61163b552d43f6b7cc453bb01da934dc86cd96f5ac1442eed69a5369ec85a"
+    }
+  ]
+}
