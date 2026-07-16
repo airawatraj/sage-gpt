@@ -2,14 +2,14 @@
 
 > *"To find the Sutra in the Signal."*
 
-**Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **from scratch** on a specialised corpus of **~140M Sanskrit tokens**. It is not a fine-tuned version of an existing LLM. It is built ground-up for one language and one domain: classical and Vedic Sanskrit literature.
+**Sage-GPT** is a Sanskrit-only Small Language Model (SLM) trained **from scratch** on a specialised Sanskrit corpus. The active tokenized training stream is a 139 MB binary containing **72.8M SentencePiece model-token IDs**, split into **69.2M training tokens** and **3.6M validation tokens**. It is not a fine-tuned version of an existing LLM.
 
 The goal is not to compete with large general-purpose LLMs. The goal is to test whether a compact, carefully trained model can learn Sanskrit-specific structure, including morphology, sandhi patterns, verse-like continuation, and domain vocabulary, from a focused Sanskrit corpus.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
 ![Model](https://img.shields.io/badge/model-7.2M%20SLM-purple)
 ![Training](https://img.shields.io/badge/training-from%20scratch-orange)
-![Dataset](https://img.shields.io/badge/data-140M%20Sanskrit%20tokens-blue)
+![Dataset](https://img.shields.io/badge/data-72.8M%20model%20tokens-blue)
 ![Hardware](https://img.shields.io/badge/hardware-NVIDIA%20DGX%20Spark-brightgreen?logo=nvidia&logoColor=white)
 ![Context](https://img.shields.io/badge/context-1024-lightgrey)
 
@@ -42,7 +42,7 @@ A compact decoder-only Transformer, sized for repeated experimentation on a home
 
 The purification stage transforms raw Sanskrit source material into a cleaner training corpus. The pipeline is designed to reduce OCR noise, obvious vernacular contamination, malformed Unicode, and non-Sanskrit fragments while preserving Devanagari structure and Vedic markers where possible.
 
-This is a strict filtering pipeline, but it should not be interpreted as a formal guarantee of zero contamination. Corpus quality is continuously audited and improved.
+This is a conservative filtering pipeline, but it should not be interpreted as a formal guarantee of zero contamination. Corpus quality is continuously audited and improved.
 
 Main features:
 
@@ -71,7 +71,7 @@ uv run python3 1-data/05-scripts/refine_corpus.py
 
 ### Step 3 - Sutra Tokenization
 
-Trains a SentencePiece Unigram tokenizer with an 8,192 token vocabulary on the Sanskrit corpus.
+Trains a SentencePiece Unigram tokenizer with an 8,192 token vocabulary and writes `1-data/03-tokenized/corpus.bin`. The current binary is 139 MB and contains 72.8M `uint16` SentencePiece token IDs.
 
 ```bash
 uv run python3 2-tokenizer/sutra_tokenizer.py
@@ -113,6 +113,8 @@ This recipe is designed for continuing from the best checkpoint with a fresh opt
 | **Batch Size** | 256 global / 64 micro | 4-step gradient accumulation |
 | **Training Duration** | Indefinite, `MAX_STEPS = None` | Ctrl+C triggers emergency save and clean exit |
 | **Thermal Guard** | Pause at 75°C | DGX Spark thermal safety |
+
+Current loaded split: **69.2M train tokens** and **3.6M validation tokens**.
 
 ### Training Signal Strategy
 
